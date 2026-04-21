@@ -202,10 +202,14 @@ scope_violations
   target              TEXT NOT NULL
   occurred_at         TIMESTAMPTZ NOT NULL
 
--- existing flows table gets two new columns
+-- existing flows table gets three new columns
 ALTER TABLE flows
-  ADD COLUMN engagement_id UUID NULL REFERENCES engagements(id),
-  ADD COLUMN flow_type flow_type NOT NULL DEFAULT 'new_test';
+  ADD COLUMN engagement_id    UUID NULL REFERENCES engagements(id),
+  ADD COLUMN flow_type        flow_type NOT NULL DEFAULT 'new_test',
+  ADD COLUMN baseline_flow_id UUID NULL REFERENCES flows(id);
+  -- baseline_flow_id: required when flow_type = 'retest_diff'
+  --                   pins the prior flow this retest is diffed against
+  -- CHECK enforced in app layer: retest_diff ⇒ baseline_flow_id NOT NULL
 ```
 
 ### 4.2 Enums
@@ -347,8 +351,16 @@ new_test:
   - flow runs as today
 
 retest_diff:
-  - pre-flight computes diff between findings present at flow.previous_flow_ref
-    time and now (status transitions: fixed | persistent | new | regressed)
+  - caller supplies baseline_flow_id (a prior flow in the same engagement)
+  - pre-flight computes the diff:
+      baseline_set  = findings in this engagement with
+                      first_seen_at <= baseline_flow.created_at
+      current_set   = all findings in this engagement now
+      fixed         = baseline_set \ current_set
+      persistent    = baseline_set ∩ current_set (unchanged verification)
+      regressed     = persistent ∩ {verification was 'confirmed' in baseline era,
+                      later 'false_positive' or 'not_exploitable' — now back}
+      new           = current_set \ baseline_set
   - diff persisted to flow_retest_diff table for deliverable output
   - orchestrator prompt gets structured summary of the diff
   - during the run, agents can call get_retest_diff tool to drill in
@@ -357,8 +369,10 @@ targeted_reverify:
   - caller supplies a list of finding_ids → written to flow_retest_targets
   - orchestrator prompt is narrow: "Verify these N findings only. Mark each
     confirmed/false_positive using mark_finding_verified."
-  - list_findings / get_top_findings_by_cvss are hidden for this flow type;
-    only get_finding_by_id is exposed, scoped to the target list
+  - narrowing is prompt-level (not tool-registration-level); list_findings and
+    get_top_findings_by_cvss remain registered but the prompt instructs the
+    agent to use get_finding_by_id against the supplied target list
+  - the scope hard-gate (§5.3) still applies on top of this
 ```
 
 ### 5.3 Scope hard-gate (R-A)
@@ -451,7 +465,9 @@ extend type Mutation {
   addScopeRule(engagementId: ID!, input: ScopeRuleInput!): ScopeRule!
   verifyFinding(id: ID!, input: VerifyFindingInput!): Finding!
   # Existing createFlow mutation gains optional:
-  #   engagementId, flowType, retestTargetFindingIds
+  #   engagementId, flowType, baselineFlowId, retestTargetFindingIds
+  # Validation: retest_diff requires baselineFlowId;
+  #             targeted_reverify requires retestTargetFindingIds
 }
 
 extend type Subscription {
