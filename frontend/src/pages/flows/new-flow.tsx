@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from '@/components/ui/breadcrumb';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,6 +13,7 @@ import { useSystemSettings } from '@/providers/system-settings-provider';
 
 const NewFlow = () => {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
 
     const { selectedProvider } = useProviders();
     const { createFlow, createFlowWithAssistant } = useFlows();
@@ -20,6 +21,10 @@ const NewFlow = () => {
 
     const [isLoading, setIsLoading] = useState(false);
     const [flowType, setFlowType] = useState<'assistant' | 'automation'>('automation');
+
+    // Phase 15: allow pre-populating the engagement from the "Start a new flow"
+    // button on the engagement detail page (/flows/new?engagement=<id>).
+    const preselectedEngagementId = searchParams.get('engagement') ?? undefined;
 
     // Calculate default useAgents value (only for assistant type)
     const shouldUseAgents = useMemo(() => {
@@ -89,6 +94,7 @@ const NewFlow = () => {
                         </Tabs>
                         <FlowForm
                             defaultValues={{
+                                engagementId: preselectedEngagementId,
                                 providerName: selectedProvider?.name ?? '',
                                 useAgents: shouldUseAgents,
                             }}

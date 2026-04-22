@@ -2376,6 +2376,19 @@ export type VerifyFindingMutationVariables = Exact<{
 
 export type VerifyFindingMutation = { verifyFinding: { id: string; verificationStatus: VerificationStatus } };
 
+export type FlowsForBaselinePickerQueryVariables = Exact<{ [key: string]: never }>;
+
+export type FlowsForBaselinePickerQuery = {
+    flows?: Array<{
+        id: string;
+        title: string;
+        status: StatusType;
+        createdAt: any;
+        updatedAt: any;
+        engagement?: { id: string } | null;
+    }> | null;
+};
+
 export const SettingsFragmentFragmentDoc = gql`
     fragment settingsFragment on Settings {
         debug
@@ -7571,4 +7584,79 @@ export type VerifyFindingMutationResult = Apollo.MutationResult<VerifyFindingMut
 export type VerifyFindingMutationOptions = Apollo.BaseMutationOptions<
     VerifyFindingMutation,
     VerifyFindingMutationVariables
+>;
+export const FlowsForBaselinePickerDocument = gql`
+    query flowsForBaselinePicker {
+        flows {
+            id
+            title
+            status
+            createdAt
+            updatedAt
+            engagement {
+                id
+            }
+        }
+    }
+`;
+
+/**
+ * __useFlowsForBaselinePickerQuery__
+ *
+ * To run a query within a React component, call `useFlowsForBaselinePickerQuery` and pass it any options that fit your needs.
+ * When your component renders, `useFlowsForBaselinePickerQuery` returns an object from Apollo Client that contains loading, error, and data properties
+ * you can use to render your UI.
+ *
+ * @param baseOptions options that will be passed into the query, supported options are listed on: https://www.apollographql.com/docs/react/api/react-hooks/#options;
+ *
+ * @example
+ * const { data, loading, error } = useFlowsForBaselinePickerQuery({
+ *   variables: {
+ *   },
+ * });
+ */
+export function useFlowsForBaselinePickerQuery(
+    baseOptions?: Apollo.QueryHookOptions<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useQuery<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>(
+        FlowsForBaselinePickerDocument,
+        options,
+    );
+}
+export function useFlowsForBaselinePickerLazyQuery(
+    baseOptions?: Apollo.LazyQueryHookOptions<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useLazyQuery<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>(
+        FlowsForBaselinePickerDocument,
+        options,
+    );
+}
+// @ts-ignore
+export function useFlowsForBaselinePickerSuspenseQuery(
+    baseOptions?: Apollo.SuspenseQueryHookOptions<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>,
+): Apollo.UseSuspenseQueryResult<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>;
+export function useFlowsForBaselinePickerSuspenseQuery(
+    baseOptions?:
+        | Apollo.SkipToken
+        | Apollo.SuspenseQueryHookOptions<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>,
+): Apollo.UseSuspenseQueryResult<FlowsForBaselinePickerQuery | undefined, FlowsForBaselinePickerQueryVariables>;
+export function useFlowsForBaselinePickerSuspenseQuery(
+    baseOptions?:
+        | Apollo.SkipToken
+        | Apollo.SuspenseQueryHookOptions<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>,
+) {
+    const options = baseOptions === Apollo.skipToken ? baseOptions : { ...defaultOptions, ...baseOptions };
+    return Apollo.useSuspenseQuery<FlowsForBaselinePickerQuery, FlowsForBaselinePickerQueryVariables>(
+        FlowsForBaselinePickerDocument,
+        options,
+    );
+}
+export type FlowsForBaselinePickerQueryHookResult = ReturnType<typeof useFlowsForBaselinePickerQuery>;
+export type FlowsForBaselinePickerLazyQueryHookResult = ReturnType<typeof useFlowsForBaselinePickerLazyQuery>;
+export type FlowsForBaselinePickerSuspenseQueryHookResult = ReturnType<typeof useFlowsForBaselinePickerSuspenseQuery>;
+export type FlowsForBaselinePickerQueryResult = Apollo.QueryResult<
+    FlowsForBaselinePickerQuery,
+    FlowsForBaselinePickerQueryVariables
 >;

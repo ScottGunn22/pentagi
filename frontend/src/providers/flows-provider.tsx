@@ -6,6 +6,7 @@ import type { FlowFormValues } from '@/features/flows/flow-form';
 import type { FlowFragmentFragment, FlowsQuery } from '@/graphql/types';
 
 import {
+    FlowType,
     useCreateAssistantMutation,
     useCreateFlowMutation,
     useDeleteFlowMutation,
@@ -72,7 +73,7 @@ export const FlowsProvider = ({ children }: FlowsProviderProps) => {
 
     const createFlow = useCallback(
         async (values: FlowFormValues) => {
-            const { message, providerName } = values;
+            const { baselineFlowId, engagementId, flowType, message, providerName, retestTargetFindingIds } = values;
 
             const input = message.trim();
             const modelProvider = providerName.trim();
@@ -81,11 +82,30 @@ export const FlowsProvider = ({ children }: FlowsProviderProps) => {
                 return null;
             }
 
+            // Only forward engagement-aware variables when they are meaningful.
+            // This keeps the legacy (ad-hoc) path byte-identical for callers that
+            // never touch the engagement section of the form.
+            const hasEngagement = Boolean(engagementId);
+            const effectiveFlowType = hasEngagement ? flowType ?? FlowType.NewTest : undefined;
+            const effectiveBaselineFlowId =
+                hasEngagement && effectiveFlowType === FlowType.RetestDiff ? baselineFlowId : undefined;
+            const effectiveFindingIds =
+                hasEngagement &&
+                effectiveFlowType === FlowType.TargetedReverify &&
+                retestTargetFindingIds &&
+                retestTargetFindingIds.length > 0
+                    ? retestTargetFindingIds
+                    : undefined;
+
             try {
                 const { data } = await createFlowMutation({
                     variables: {
+                        baselineFlowId: effectiveBaselineFlowId,
+                        engagementId: hasEngagement ? engagementId : undefined,
+                        flowType: effectiveFlowType,
                         input,
                         modelProvider,
+                        retestTargetFindingIds: effectiveFindingIds,
                     },
                 });
 

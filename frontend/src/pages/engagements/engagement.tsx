@@ -317,14 +317,14 @@ const Engagement = () => {
                             <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
                                 <GitFork className="text-muted-foreground size-8" />
                                 <div>
-                                    <h3 className="text-lg font-semibold">Flows are not yet scoped to engagements</h3>
+                                    <h3 className="text-lg font-semibold">Start an engagement-aware flow</h3>
                                     <p className="text-muted-foreground mt-1 max-w-md text-sm">
-                                        The flow <code>engagement_id</code> link is arriving in a follow-up.
-                                        For now, start a regular pentest flow and reference this engagement manually.
+                                        New flows launched from here are scoped to this engagement — pick a flow
+                                        type (new test, retest diff, or targeted reverify) on the next screen.
                                     </p>
                                 </div>
                                 <Button
-                                    onClick={() => navigate('/flows/new')}
+                                    onClick={() => navigate(`/flows/new?engagement=${id}`)}
                                     variant="secondary"
                                 >
                                     <GitFork />

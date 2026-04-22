@@ -1365,3 +1365,21 @@ mutation verifyFinding($id: ID!, $input: VerifyFindingInput!) {
         verificationStatus
     }
 }
+
+# Lightweight listing of flows for the "baseline flow" picker in
+# engagement-aware flow creation. The Engagement type does not expose a
+# `flows` field on the server, so we fetch the global list and filter by
+# engagement id on the client. Only the fields needed for the picker are
+# selected here to keep the payload small.
+query flowsForBaselinePicker {
+    flows {
+        id
+        title
+        status
+        createdAt
+        updatedAt
+        engagement {
+            id
+        }
+    }
+}
