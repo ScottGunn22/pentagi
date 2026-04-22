@@ -323,3 +323,53 @@ func (i *Int64) String() string {
 	}
 	return strconv.FormatInt(int64(*i), 10)
 }
+
+// ---------------------------------------------------------------------
+// Engagement-findings tool args (Phase 11).
+//
+// These are the JSON schemas surfaced to the LLM for the six findings
+// tools. The handler implementations live in pkg/ingestion/findings —
+// Phase 14 is where those handlers get wired into the per-flow executor
+// registry (GetPentesterExecutor, GetPrimaryExecutor, etc.).
+//
+// Keeping the arg types in this file matches the convention every other
+// PentAGI tool follows (SearchAction, GraphitiSearchAction, etc.): the
+// reflector in registry.go expects the structs in the same package as
+// registryDefinitions.
+// ---------------------------------------------------------------------
+
+// ListFindingsAction controls list_findings.
+type ListFindingsAction struct {
+	Severity           string `json:"severity,omitempty" jsonschema:"enum=info,enum=low,enum=medium,enum=high,enum=critical" jsonschema_description:"Filter by severity level"`
+	CVE                string `json:"cve,omitempty" jsonschema_description:"Exact CVE identifier to filter on, e.g. CVE-2024-1234"`
+	TargetKind         string `json:"target_kind,omitempty" jsonschema:"enum=host,enum=web_endpoint,enum=container" jsonschema_description:"Filter by target kind"`
+	VerificationStatus string `json:"verification_status,omitempty" jsonschema:"enum=unverified,enum=verifying,enum=confirmed,enum=false_positive,enum=not_exploitable" jsonschema_description:"Filter by verification status"`
+	Limit              int32  `json:"limit,omitempty" jsonschema:"type=integer" jsonschema_description:"Maximum rows to return (default 50, capped at 500)"`
+	Offset             int32  `json:"offset,omitempty" jsonschema:"type=integer" jsonschema_description:"Pagination offset (default 0)"`
+}
+
+// TopFindingsByCVSSAction controls get_top_findings_by_cvss.
+type TopFindingsByCVSSAction struct {
+	Limit int32 `json:"limit,omitempty" jsonschema:"type=integer" jsonschema_description:"Top-N findings to return, ordered by CVSS score desc (default 10, capped at 100)"`
+}
+
+// FindingsByKindAction is the (empty) args struct shared by
+// get_host_services and get_container_cves. The engagement is captured
+// at construction time and the target kind is bound into each tool's
+// identity, so no runtime arguments are needed.
+type FindingsByKindAction struct{}
+
+// GetFindingByIDAction controls get_finding_by_id.
+type GetFindingByIDAction struct {
+	ID int64 `json:"id" jsonschema:"required,type=integer" jsonschema_description:"Database id of the finding to fetch. Must belong to the current engagement."`
+}
+
+// MarkFindingVerifiedAction controls mark_finding_verified. verified_by
+// is intentionally absent at the schema level: LLM agents do not carry
+// a user id, so the handler writes NULL. Phase 14 may fill it from the
+// surrounding flow context.
+type MarkFindingVerifiedAction struct {
+	ID                 int64  `json:"id" jsonschema:"required,type=integer" jsonschema_description:"Database id of the finding to update"`
+	VerificationStatus string `json:"verification_status" jsonschema:"required,enum=confirmed,enum=false_positive,enum=not_exploitable" jsonschema_description:"Terminal classification the agent is assigning. 'confirmed' means the vulnerability was reproduced; 'false_positive' means the scanner was wrong; 'not_exploitable' means real but not reachable / not useful."`
+	Notes              string `json:"notes,omitempty" jsonschema_description:"Free-text reasoning for the classification. Include evidence the agent gathered (commands run, payloads tried, responses seen)."`
+}
