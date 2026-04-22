@@ -133,24 +133,27 @@ func TestIngestionE2E_NmapUploadToFindings(t *testing.T) {
 	defer srv.Close()
 
 	// Seed a local user so the created_by FK in engagements resolves.
+	// users.id is BIGINT GENERATED ALWAYS AS IDENTITY → use OVERRIDING SYSTEM VALUE
+	// so the test owns the ID it later passes via the fake auth middleware.
 	if _, err := sqlDB.ExecContext(ctx, `
 		INSERT INTO users (id, hash, type, mail, name, status, role_id, password, password_change_required)
+		OVERRIDING SYSTEM VALUE
 		VALUES ($1, 'e2e-hash', 'local', 'e2e@example.com', 'e2e', 'active', 2, 'x', false)
 		ON CONFLICT (id) DO NOTHING`, testUID); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 
 	// --- step 1: create engagement -------------------------------------------
+	// doJSON already extracts the {"data":...} envelope, so the out type is the
+	// inner shape directly — no second wrapper struct needed.
 	createBody := map[string]string{"name": "Acme Q1", "client": "Acme"}
-	var engResp struct {
-		Data database.Engagement `json:"data"`
-	}
-	doJSON(t, srv.URL+"/api/v1/engagements", http.MethodPost, createBody, http.StatusCreated, &engResp)
-	engID := engResp.Data.ID
+	var eng database.Engagement
+	doJSON(t, srv.URL+"/api/v1/engagements", http.MethodPost, createBody, http.StatusCreated, &eng)
+	engID := eng.ID
 	if engID == 0 {
-		t.Fatalf("expected engagement id, got 0 (resp=%+v)", engResp.Data)
+		t.Fatalf("expected engagement id, got 0 (resp=%+v)", eng)
 	}
-	t.Logf("engagement id: %d, group: %s", engID, engResp.Data.GraphitiGroupID)
+	t.Logf("engagement id: %d, group: %s", engID, eng.GraphitiGroupID)
 
 	// --- step 2: add an in-scope CIDR rule so minimal.xml targets count ------
 	scopeBody := map[string]string{"rule_type": "cidr", "value": "10.1.0.0/16", "direction": "include"}
@@ -161,13 +164,11 @@ func TestIngestionE2E_NmapUploadToFindings(t *testing.T) {
 	// --- step 3: upload minimal.xml ------------------------------------------
 	xmlPath := filepath.Join("parsers", "testdata", "nmap", "minimal.xml")
 	body1, ct1 := buildUpload(t, xmlPath, "nmap")
-	var reportResp struct {
-		Data database.ScanReport `json:"data"`
-	}
+	var report database.ScanReport
 	doMultipart(t,
 		fmt.Sprintf("%s/api/v1/engagements/%d/reports", srv.URL, engID),
-		ct1, body1, http.StatusAccepted, &reportResp)
-	reportID := reportResp.Data.ID
+		ct1, body1, http.StatusAccepted, &report)
+	reportID := report.ID
 	if reportID == 0 {
 		t.Fatal("expected scan_report id")
 	}
@@ -176,18 +177,16 @@ func TestIngestionE2E_NmapUploadToFindings(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	var status string
 	for time.Now().Before(deadline) {
-		var pollResp struct {
-			Data database.ScanReport `json:"data"`
-		}
+		var poll database.ScanReport
 		doJSON(t,
 			fmt.Sprintf("%s/api/v1/engagements/%d/reports/%d", srv.URL, engID, reportID),
-			http.MethodGet, nil, http.StatusOK, &pollResp)
-		status = string(pollResp.Data.ParseStatus)
+			http.MethodGet, nil, http.StatusOK, &poll)
+		status = string(poll.ParseStatus)
 		if status == "succeeded" || status == "partial" {
 			break
 		}
 		if status == "failed" {
-			t.Fatalf("parse failed: %s", pollResp.Data.ParseError.String)
+			t.Fatalf("parse failed: %s", poll.ParseError.String)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -196,16 +195,14 @@ func TestIngestionE2E_NmapUploadToFindings(t *testing.T) {
 	}
 
 	// --- step 5: findings list ----------------------------------------------
-	var findings struct {
-		Data []database.Finding `json:"data"`
-	}
+	var findings []database.Finding
 	doJSON(t,
 		fmt.Sprintf("%s/api/v1/engagements/%d/findings", srv.URL, engID),
 		http.MethodGet, nil, http.StatusOK, &findings)
-	if got := len(findings.Data); got != 2 {
+	if got := len(findings); got != 2 {
 		t.Fatalf("expected 2 findings, got %d", got)
 	}
-	for _, f := range findings.Data {
+	for _, f := range findings {
 		if !f.InScope {
 			t.Errorf("finding %d (%s) should be in scope", f.ID, f.TargetRef)
 		}
