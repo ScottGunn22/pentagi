@@ -375,9 +375,10 @@ func (fte *flowToolsExecutor) hasEngagement() bool {
 	return fte.engagementID != nil && fte.findingsTools != nil
 }
 
-// appendFindingsTools appends the six engagement-scoped findings tools to the
-// given definition slice and handlers map. Callers must check hasEngagement()
-// first; calling this otherwise panics on a nil findingsTools receiver.
+// appendFindingsTools appends the seven engagement-scoped findings tools to
+// the given definition slice and handlers map. Callers must check
+// hasEngagement() first; calling this otherwise panics on a nil
+// findingsTools receiver.
 func (fte *flowToolsExecutor) appendFindingsTools(
 	definitions []llms.FunctionDefinition,
 	handlers map[string]ExecutorHandler,
@@ -390,6 +391,7 @@ func (fte *flowToolsExecutor) appendFindingsTools(
 		registryDefinitions[GetContainerCVEsToolName],
 		registryDefinitions[GetFindingByIDToolName],
 		registryDefinitions[MarkFindingVerifiedToolName],
+		registryDefinitions[GetRetestDiffToolName],
 	)
 	handlers[ListFindingsToolName] = ft.ListFindings
 	handlers[GetTopFindingsByCVSSToolName] = ft.GetTopFindingsByCVSS
@@ -397,6 +399,7 @@ func (fte *flowToolsExecutor) appendFindingsTools(
 	handlers[GetContainerCVEsToolName] = ft.GetContainerCVEs
 	handlers[GetFindingByIDToolName] = ft.GetFindingByID
 	handlers[MarkFindingVerifiedToolName] = ft.MarkFindingVerified
+	handlers[GetRetestDiffToolName] = ft.GetRetestDiff
 	return definitions
 }
 

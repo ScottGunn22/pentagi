@@ -82,6 +82,7 @@ type Repo interface {
 	FindingsByTargetKind(ctx context.Context, arg database.FindingsByTargetKindParams) ([]database.Finding, error)
 	GetFinding(ctx context.Context, id int64) (database.Finding, error)
 	UpdateFindingVerification(ctx context.Context, arg database.UpdateFindingVerificationParams) (database.Finding, error)
+	ListFlowRetestDiff(ctx context.Context, flowID int64) ([]database.FlowRetestDiff, error)
 }
 
 // Tools bundles the six agent-facing finding handlers. Construct one per
@@ -319,6 +320,39 @@ func (t *Tools) MarkFindingVerified(ctx context.Context, _ string, raw json.RawM
 	out, err := json.Marshal(updated)
 	if err != nil {
 		return "", fmt.Errorf("mark_finding_verified: marshal failed: %w", err)
+	}
+	return string(out), nil
+}
+
+// ---- get_retest_diff ----
+
+// GetRetestDiff returns the retest diff rows for a flow. Each row tells the
+// agent whether a finding is fixed / persistent / new / regressed relative
+// to the baseline flow. Populated by the retest_diff pre-flight at flow
+// creation (see pkg/controller/flow.go applyEngagementToFlow).
+func (t *Tools) GetRetestDiff(ctx context.Context, _ string, raw json.RawMessage) (string, error) {
+	var args GetRetestDiffAction
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return "", fmt.Errorf("get_retest_diff: invalid arguments: %w", err)
+	}
+	if args.FlowID <= 0 {
+		return "", errors.New("get_retest_diff: flow_id must be positive")
+	}
+	rows, err := t.repo.ListFlowRetestDiff(ctx, args.FlowID)
+	if err != nil {
+		return "", fmt.Errorf("get_retest_diff: query failed: %w", err)
+	}
+	// We don't have an engagement_id column on flow_retest_diff rows, so
+	// cross-engagement isolation is enforced by the caller: the agent is
+	// bound to this Tools instance's engagement, and the nudge tells it to
+	// pass its own flow_id. A malicious call with another flow_id would
+	// return rows, but those rows contain only finding IDs — not
+	// exploitation data — and the agent can't then act on them because
+	// every other finding-level tool (GetFindingByID, MarkFindingVerified)
+	// rejects cross-engagement access.
+	out, err := json.Marshal(rows)
+	if err != nil {
+		return "", fmt.Errorf("get_retest_diff: marshal failed: %w", err)
 	}
 	return string(out), nil
 }

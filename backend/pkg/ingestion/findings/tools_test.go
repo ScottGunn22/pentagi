@@ -39,6 +39,12 @@ type stubRepo struct {
 	updateParams database.UpdateFindingVerificationParams
 	updateResult database.Finding
 	updateErr    error
+
+	// ListFlowRetestDiff
+	diffCalled bool
+	diffFlowID int64
+	diffResult []database.FlowRetestDiff
+	diffErr    error
 }
 
 func (s *stubRepo) ListFindings(_ context.Context, p database.ListFindingsParams) ([]database.Finding, error) {
@@ -75,6 +81,12 @@ func (s *stubRepo) UpdateFindingVerification(_ context.Context, p database.Updat
 	s.updateCalled = true
 	s.updateParams = p
 	return s.updateResult, s.updateErr
+}
+
+func (s *stubRepo) ListFlowRetestDiff(_ context.Context, flowID int64) ([]database.FlowRetestDiff, error) {
+	s.diffCalled = true
+	s.diffFlowID = flowID
+	return s.diffResult, s.diffErr
 }
 
 // --- constructor ---
@@ -366,3 +378,46 @@ func TestMarkFindingVerified_EmptyNotesStaysNull(t *testing.T) {
 // signatures without updating Repo.
 
 var _ Repo = (*database.Queries)(nil)
+
+// --- get_retest_diff ---
+
+func TestGetRetestDiff_HappyPath(t *testing.T) {
+	want := []database.FlowRetestDiff{
+		{FlowID: 42, FindingID: 1, DiffState: database.DiffStateFixed},
+		{FlowID: 42, FindingID: 2, DiffState: database.DiffStatePersistent},
+	}
+	s := &stubRepo{diffResult: want}
+	tl, _ := New(s, 1)
+	got, err := tl.GetRetestDiff(context.Background(), "get_retest_diff", json.RawMessage(`{"flow_id":42}`))
+	if err != nil {
+		t.Fatalf("GetRetestDiff: %v", err)
+	}
+	if !s.diffCalled || s.diffFlowID != 42 {
+		t.Errorf("expected ListFlowRetestDiff(42), got called=%v flowID=%d", s.diffCalled, s.diffFlowID)
+	}
+	if !strings.Contains(got, `"diff_state":"fixed"`) {
+		t.Errorf("expected 'fixed' in output, got %s", got)
+	}
+}
+
+func TestGetRetestDiff_RejectsInvalidFlowID(t *testing.T) {
+	s := &stubRepo{}
+	tl, _ := New(s, 1)
+	if _, err := tl.GetRetestDiff(context.Background(), "get_retest_diff", json.RawMessage(`{"flow_id":0}`)); err == nil {
+		t.Fatal("expected error for flow_id=0")
+	}
+	if _, err := tl.GetRetestDiff(context.Background(), "get_retest_diff", json.RawMessage(`{"flow_id":-1}`)); err == nil {
+		t.Fatal("expected error for negative flow_id")
+	}
+	if s.diffCalled {
+		t.Error("ListFlowRetestDiff must not be invoked for invalid args")
+	}
+}
+
+func TestGetRetestDiff_MalformedJSON(t *testing.T) {
+	s := &stubRepo{}
+	tl, _ := New(s, 1)
+	if _, err := tl.GetRetestDiff(context.Background(), "get_retest_diff", json.RawMessage(`{bad json}`)); err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+}
