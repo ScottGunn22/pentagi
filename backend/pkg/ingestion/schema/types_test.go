@@ -18,12 +18,25 @@ func TestContainerTargetRef(t *testing.T) {
 
 func TestSeverityParse(t *testing.T) {
 	cases := map[string]Severity{
+		// canonical names, mixed casing
 		"Info": SeverityInfo, "LOW": SeverityLow, "Medium": SeverityMedium,
 		"high": SeverityHigh, "CRITICAL": SeverityCritical,
+		// aliases
+		"informational": SeverityInfo, "moderate": SeverityMedium,
+		"med": SeverityMedium, "crit": SeverityCritical,
+		// numeric (Qualys 1-5 convention)
+		"0": SeverityInfo, "1": SeverityLow,
+		"2": SeverityMedium, "3": SeverityMedium,
+		"4": SeverityHigh, "5": SeverityCritical,
+		// whitespace tolerance
+		"  High  ": SeverityHigh,
+		// fallthrough: empty and unknown both map to info (documents default)
+		"":      SeverityInfo,
+		"bogus": SeverityInfo,
 	}
 	for in, want := range cases {
 		if got := ParseSeverity(in); got != want {
-			t.Fatalf("ParseSeverity(%q)=%v, want %v", in, got, want)
+			t.Errorf("ParseSeverity(%q)=%v, want %v", in, got, want)
 		}
 	}
 }
