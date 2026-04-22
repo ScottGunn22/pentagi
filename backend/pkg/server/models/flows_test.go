@@ -73,6 +73,63 @@ func TestCreateFlowValid(t *testing.T) {
 		cf := CreateFlow{Input: "scan target", Provider: ""}
 		assert.Error(t, cf.Valid())
 	})
+
+	t.Run("valid with engagement + new_test", func(t *testing.T) {
+		t.Parallel()
+		// Engagement context is optional; when supplied it must be paired with
+		// a known flow_type. Controller-level invariants (baseline for
+		// retest_diff, targets for targeted_reverify) are enforced deeper in
+		// the stack so only the shape validates here.
+		eid := int64(7)
+		ft := "new_test"
+		cf := CreateFlow{Input: "scan target", Provider: "openai", EngagementID: &eid, FlowType: &ft}
+		assert.NoError(t, cf.Valid())
+	})
+
+	t.Run("valid with retest_diff + baseline + targets", func(t *testing.T) {
+		t.Parallel()
+		eid := int64(7)
+		bid := int64(101)
+		ft := "retest_diff"
+		cf := CreateFlow{
+			Input:                  "rerun",
+			Provider:               "openai",
+			EngagementID:           &eid,
+			FlowType:               &ft,
+			BaselineFlowID:         &bid,
+			RetestTargetFindingIDs: []int64{1, 2, 3},
+		}
+		assert.NoError(t, cf.Valid())
+	})
+
+	t.Run("invalid flow_type value", func(t *testing.T) {
+		t.Parallel()
+		eid := int64(7)
+		ft := "not_a_real_flow_type"
+		cf := CreateFlow{Input: "x", Provider: "openai", EngagementID: &eid, FlowType: &ft}
+		assert.Error(t, cf.Valid())
+	})
+
+	t.Run("invalid negative engagement id", func(t *testing.T) {
+		t.Parallel()
+		eid := int64(0)
+		cf := CreateFlow{Input: "x", Provider: "openai", EngagementID: &eid}
+		assert.Error(t, cf.Valid())
+	})
+
+	t.Run("invalid zero finding id in targets", func(t *testing.T) {
+		t.Parallel()
+		eid := int64(7)
+		ft := "targeted_reverify"
+		cf := CreateFlow{
+			Input:                  "x",
+			Provider:               "openai",
+			EngagementID:           &eid,
+			FlowType:               &ft,
+			RetestTargetFindingIDs: []int64{1, 0, 3},
+		}
+		assert.Error(t, cf.Valid())
+	})
 }
 
 func TestPatchFlowValid(t *testing.T) {

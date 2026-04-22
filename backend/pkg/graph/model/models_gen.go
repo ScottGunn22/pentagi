@@ -236,13 +236,16 @@ type FindingStats struct {
 }
 
 type Flow struct {
-	ID        int64       `json:"id"`
-	Title     string      `json:"title"`
-	Status    StatusType  `json:"status"`
-	Terminals []*Terminal `json:"terminals,omitempty"`
-	Provider  *Provider   `json:"provider"`
-	CreatedAt time.Time   `json:"createdAt"`
-	UpdatedAt time.Time   `json:"updatedAt"`
+	ID           int64       `json:"id"`
+	Title        string      `json:"title"`
+	Status       StatusType  `json:"status"`
+	Terminals    []*Terminal `json:"terminals,omitempty"`
+	Provider     *Provider   `json:"provider"`
+	CreatedAt    time.Time   `json:"createdAt"`
+	UpdatedAt    time.Time   `json:"updatedAt"`
+	Engagement   *Engagement `json:"engagement,omitempty"`
+	FlowType     FlowType    `json:"flowType"`
+	BaselineFlow *Flow       `json:"baselineFlow,omitempty"`
 }
 
 type FlowAssistant struct {

@@ -86,6 +86,14 @@ type CreateFlow struct {
 	Input     string           `form:"input" json:"input" validate:"required" example:"user input for first task in the flow"`
 	Provider  string           `form:"provider" json:"provider" validate:"required" example:"openai"`
 	Functions *tools.Functions `form:"functions,omitempty" json:"functions,omitempty" validate:"omitempty,valid"`
+	// Engagement-aware fields (Phase 14). All optional; zero values yield a
+	// legacy flow with no engagement context. Per-flow-type invariants
+	// (retest_diff⇒baseline, targeted_reverify⇒targets) are enforced in the
+	// controller rather than here so GraphQL + REST share one code path.
+	EngagementID           *int64  `form:"engagement_id,omitempty" json:"engagement_id,omitempty" validate:"omitempty,min=1" example:"42"`
+	FlowType               *string `form:"flow_type,omitempty" json:"flow_type,omitempty" validate:"omitempty,oneof=new_test retest_diff targeted_reverify" example:"new_test"`
+	BaselineFlowID         *int64  `form:"baseline_flow_id,omitempty" json:"baseline_flow_id,omitempty" validate:"omitempty,min=1" example:"101"`
+	RetestTargetFindingIDs []int64 `form:"retest_target_finding_ids,omitempty" json:"retest_target_finding_ids,omitempty" validate:"omitempty,dive,min=1" example:"1,2,3"`
 }
 
 // Valid is function to control input/output data

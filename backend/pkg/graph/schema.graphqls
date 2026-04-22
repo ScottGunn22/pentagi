@@ -1,5 +1,9 @@
 scalar Time
 
+# Force a field to be resolved by a resolver method instead of being read
+# directly from the generated model struct (gqlgen extension).
+directive @goField(forceResolver: Boolean, name: String) on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
 # Core execution status for flows, tasks and agents
 enum StatusType {
   created
@@ -855,7 +859,14 @@ type Query {
 
 type Mutation {
   # Flow management
-  createFlow(modelProvider: String!, input: String!): Flow!
+  createFlow(
+    modelProvider: String!
+    input: String!
+    engagementId: ID
+    flowType: FlowType = NEW_TEST
+    baselineFlowId: ID
+    retestTargetFindingIds: [ID!]
+  ): Flow!
   putUserInput(flowId: ID!, input: String!, modelProvider: String): ResultType!
   stopFlow(flowId: ID!): ResultType!
   finishFlow(flowId: ID!): ResultType!
@@ -1070,6 +1081,14 @@ extend type Mutation {
   addScopeRule(engagementId: ID!, input: ScopeRuleInput!): ScopeRule!
   deleteScopeRule(id: ID!): Boolean!
   verifyFinding(id: ID!, input: VerifyFindingInput!): Finding!
+}
+
+# Engagement-aware fields on Flow (Phase 14 — legacy flows resolve
+# these as null/NEW_TEST).
+extend type Flow {
+  engagement: Engagement @goField(forceResolver: true)
+  flowType: FlowType!
+  baselineFlow: Flow @goField(forceResolver: true)
 }
 
 extend type Subscription {

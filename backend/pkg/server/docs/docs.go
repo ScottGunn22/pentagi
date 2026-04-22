@@ -624,6 +624,730 @@ const docTemplate = `{
                 }
             }
         },
+        "/engagements/": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "List engagements",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "page size (default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/database.Engagement"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Create a new engagement",
+                "parameters": [
+                    {
+                        "description": "engagement details",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.createEngagementRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/database.Engagement"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/engagements/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Get an engagement by id",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/database.Engagement"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Soft-delete an engagement",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "engagement deleted"
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Update engagement fields",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "fields to patch",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.updateEngagementRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/database.Engagement"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/engagements/{id}/findings": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "List findings for an engagement",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "filter: info|low|medium|high|critical",
+                        "name": "severity",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "filter: exact CVE id",
+                        "name": "cve",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "filter: host|web_endpoint|container",
+                        "name": "target_kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "filter: true|false",
+                        "name": "in_scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "filter verification status",
+                        "name": "verification_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size (default 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/database.Finding"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/engagements/{id}/findings/{findingId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Get a single finding",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "finding id",
+                        "name": "findingId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/database.Finding"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Patch a finding's verification status",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "finding id",
+                        "name": "findingId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "verification payload",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.updateFindingVerificationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/database.Finding"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/engagements/{id}/reports": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "List scan reports for an engagement",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/database.ScanReport"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Upload a scanner report",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "scanner source (nmap|burp|qualys|twistlock)",
+                        "name": "source_type",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "report file",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/database.ScanReport"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "409": {
+                        "description": "already ingested",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/engagements/{id}/reports/{reportId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Get a scan report",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "scan report id",
+                        "name": "reportId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/database.ScanReport"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/engagements/{id}/reports/{reportId}/raw": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Download the original scan report file",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "scan report id",
+                        "name": "reportId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "report file"
+                    }
+                }
+            }
+        },
+        "/engagements/{id}/scope-rules": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Attach a scope rule to an engagement",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "scope rule",
+                        "name": "json",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.addScopeRuleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/SuccessResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/database.EngagementScopeRule"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/engagements/{id}/scope-rules/{ruleId}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "Ingestion"
+                ],
+                "summary": "Delete a scope rule",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "engagement id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "scope rule id",
+                        "name": "ruleId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "scope rule deleted"
+                    }
+                }
+            }
+        },
         "/flows/": {
             "get": {
                 "security": [
@@ -5561,6 +6285,200 @@ const docTemplate = `{
                 }
             }
         },
+        "database.Engagement": {
+            "type": "object",
+            "properties": {
+                "client": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "type": "integer"
+                },
+                "deleted_at": {
+                    "$ref": "#/definitions/sql.NullTime"
+                },
+                "description": {
+                    "$ref": "#/definitions/sql.NullString"
+                },
+                "ends_at": {
+                    "$ref": "#/definitions/sql.NullTime"
+                },
+                "graphiti_group_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "starts_at": {
+                    "$ref": "#/definitions/sql.NullTime"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "$ref": "#/definitions/sql.NullInt64"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "integer"
+                }
+            }
+        },
+        "database.EngagementScopeRule": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "direction": {
+                    "type": "string"
+                },
+                "engagement_id": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "note": {
+                    "$ref": "#/definitions/sql.NullString"
+                },
+                "rule_type": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "database.Finding": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "cve": {
+                    "$ref": "#/definitions/sql.NullString"
+                },
+                "cvss_score": {
+                    "$ref": "#/definitions/sql.NullString"
+                },
+                "engagement_id": {
+                    "type": "integer"
+                },
+                "evidence": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "finding_type": {
+                    "type": "string"
+                },
+                "first_seen_at": {
+                    "type": "string"
+                },
+                "graph_seeded_at": {
+                    "$ref": "#/definitions/sql.NullTime"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "in_scope": {
+                    "type": "boolean"
+                },
+                "last_seen_at": {
+                    "type": "string"
+                },
+                "scan_report_id": {
+                    "type": "integer"
+                },
+                "severity": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "$ref": "#/definitions/sql.NullString"
+                },
+                "target_kind": {
+                    "type": "string"
+                },
+                "target_ref": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "verification_notes": {
+                    "$ref": "#/definitions/sql.NullString"
+                },
+                "verification_status": {
+                    "type": "string"
+                },
+                "verified_at": {
+                    "$ref": "#/definitions/sql.NullTime"
+                },
+                "verified_by": {
+                    "$ref": "#/definitions/sql.NullInt64"
+                }
+            }
+        },
+        "database.ScanReport": {
+            "type": "object",
+            "properties": {
+                "engagement_id": {
+                    "type": "integer"
+                },
+                "finding_count": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "ingested_at": {
+                    "type": "string"
+                },
+                "original_filename": {
+                    "type": "string"
+                },
+                "parse_error": {
+                    "$ref": "#/definitions/sql.NullString"
+                },
+                "parse_status": {
+                    "type": "string"
+                },
+                "parser_version": {
+                    "type": "string"
+                },
+                "scan_date": {
+                    "$ref": "#/definitions/sql.NullTime"
+                },
+                "sha256": {
+                    "type": "string"
+                },
+                "source_type": {
+                    "type": "string"
+                },
+                "storage_uri": {
+                    "type": "string"
+                },
+                "uploaded_by": {
+                    "type": "integer"
+                }
+            }
+        },
         "gqlerror.Error": {
             "type": "object",
             "properties": {
@@ -6119,6 +7037,26 @@ const docTemplate = `{
                 "provider"
             ],
             "properties": {
+                "baseline_flow_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 101
+                },
+                "engagement_id": {
+                    "description": "Engagement-aware fields (Phase 14). All optional; zero values yield a\nlegacy flow with no engagement context. Per-flow-type invariants\n(retest_diff⇒baseline, targeted_reverify⇒targets) are enforced in the\ncontroller rather than here so GraphQL + REST share one code path.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "example": 42
+                },
+                "flow_type": {
+                    "type": "string",
+                    "enum": [
+                        "new_test",
+                        "retest_diff",
+                        "targeted_reverify"
+                    ],
+                    "example": "new_test"
+                },
                 "functions": {
                     "$ref": "#/definitions/tools.Functions"
                 },
@@ -6129,6 +7067,17 @@ const docTemplate = `{
                 "provider": {
                     "type": "string",
                     "example": "openai"
+                },
+                "retest_target_finding_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "example": [
+                        1,
+                        2,
+                        3
+                    ]
                 }
             }
         },
@@ -7400,6 +8349,28 @@ const docTemplate = `{
                 }
             }
         },
+        "services.addScopeRuleRequest": {
+            "type": "object",
+            "required": [
+                "rule_type",
+                "value"
+            ],
+            "properties": {
+                "direction": {
+                    "description": "optional — defaults to \"include\"",
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "rule_type": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
         "services.agentlogs": {
             "type": "object",
             "properties": {
@@ -7453,6 +8424,24 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "services.createEngagementRequest": {
+            "type": "object",
+            "required": [
+                "client",
+                "name"
+            ],
+            "properties": {
+                "client": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -7634,6 +8623,37 @@ const docTemplate = `{
                 }
             }
         },
+        "services.updateEngagementRequest": {
+            "type": "object",
+            "properties": {
+                "client": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.updateFindingVerificationRequest": {
+            "type": "object",
+            "required": [
+                "verification_status"
+            ],
+            "properties": {
+                "notes": {
+                    "type": "string"
+                },
+                "verification_status": {
+                    "type": "string"
+                }
+            }
+        },
         "services.users": {
             "type": "object",
             "properties": {
@@ -7659,6 +8679,42 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/models.Vecstorelog"
                     }
+                }
+            }
+        },
+        "sql.NullInt64": {
+            "type": "object",
+            "properties": {
+                "int64": {
+                    "type": "integer"
+                },
+                "valid": {
+                    "description": "Valid is true if Int64 is not NULL",
+                    "type": "boolean"
+                }
+            }
+        },
+        "sql.NullString": {
+            "type": "object",
+            "properties": {
+                "string": {
+                    "type": "string"
+                },
+                "valid": {
+                    "description": "Valid is true if String is not NULL",
+                    "type": "boolean"
+                }
+            }
+        },
+        "sql.NullTime": {
+            "type": "object",
+            "properties": {
+                "time": {
+                    "type": "string"
+                },
+                "valid": {
+                    "description": "Valid is true if Time is not NULL",
+                    "type": "boolean"
                 }
             }
         },

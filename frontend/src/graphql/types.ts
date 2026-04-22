@@ -338,7 +338,10 @@ export type FindingStats = {
 };
 
 export type Flow = {
+    baselineFlow?: Maybe<Flow>;
     createdAt: Scalars['Time']['output'];
+    engagement?: Maybe<Engagement>;
+    flowType: FlowType;
     id: Scalars['ID']['output'];
     provider: Provider;
     status: StatusType;
@@ -519,8 +522,12 @@ export type MutationCreateEngagementArgs = {
 };
 
 export type MutationCreateFlowArgs = {
+    baselineFlowId?: InputMaybe<Scalars['ID']['input']>;
+    engagementId?: InputMaybe<Scalars['ID']['input']>;
+    flowType?: InputMaybe<FlowType>;
     input: Scalars['String']['input'];
     modelProvider: Scalars['String']['input'];
+    retestTargetFindingIds?: InputMaybe<Array<Scalars['ID']['input']>>;
 };
 
 export type MutationCreateFlowTemplateArgs = {
@@ -1964,6 +1971,10 @@ export type DeleteFlowTemplateMutation = { deleteFlowTemplate: ResultType };
 export type CreateFlowMutationVariables = Exact<{
     modelProvider: Scalars['String']['input'];
     input: Scalars['String']['input'];
+    engagementId?: InputMaybe<Scalars['ID']['input']>;
+    flowType?: InputMaybe<FlowType>;
+    baselineFlowId?: InputMaybe<Scalars['ID']['input']>;
+    retestTargetFindingIds?: InputMaybe<Array<Scalars['ID']['input']> | Scalars['ID']['input']>;
 }>;
 
 export type CreateFlowMutation = { createFlow: FlowFragmentFragment };
@@ -5416,8 +5427,22 @@ export type DeleteFlowTemplateMutationOptions = Apollo.BaseMutationOptions<
     DeleteFlowTemplateMutationVariables
 >;
 export const CreateFlowDocument = gql`
-    mutation createFlow($modelProvider: String!, $input: String!) {
-        createFlow(modelProvider: $modelProvider, input: $input) {
+    mutation createFlow(
+        $modelProvider: String!
+        $input: String!
+        $engagementId: ID
+        $flowType: FlowType
+        $baselineFlowId: ID
+        $retestTargetFindingIds: [ID!]
+    ) {
+        createFlow(
+            modelProvider: $modelProvider
+            input: $input
+            engagementId: $engagementId
+            flowType: $flowType
+            baselineFlowId: $baselineFlowId
+            retestTargetFindingIds: $retestTargetFindingIds
+        ) {
             ...flowFragment
         }
     }
@@ -5440,6 +5465,10 @@ export type CreateFlowMutationFn = Apollo.MutationFunction<CreateFlowMutation, C
  *   variables: {
  *      modelProvider: // value for 'modelProvider'
  *      input: // value for 'input'
+ *      engagementId: // value for 'engagementId'
+ *      flowType: // value for 'flowType'
+ *      baselineFlowId: // value for 'baselineFlowId'
+ *      retestTargetFindingIds: // value for 'retestTargetFindingIds'
  *   },
  * });
  */
