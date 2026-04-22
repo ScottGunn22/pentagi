@@ -674,6 +674,16 @@ func (s *IngestionService) runParse(
 	source schema.ScanSourceType,
 	path string,
 ) {
+	// Bind the parse log entry to the report+engagement once so every
+	// downstream warn/error inside this goroutine is correlatable. The
+	// caller passes context.Background() (request cancellation must not
+	// kill an in-flight parse), so we cannot rely on logger.FromContext.
+	log := s.log.WithFields(logrus.Fields{
+		"scan_report_id": report.ID,
+		"engagement_id":  report.EngagementID,
+		"source_type":    string(source),
+	})
+
 	p, ok := s.parsers[source]
 	if !ok {
 		_ = s.markFailed(ctx, report.ID, fmt.Errorf("no parser registered for %q", source))
@@ -707,7 +717,7 @@ func (s *IngestionService) runParse(
 	// so the reconciler (Phase 6) retries them on its next tick.
 	eng, err := s.q.GetEngagement(ctx, report.EngagementID)
 	if err != nil {
-		s.log.WithError(err).WithField("scan_report_id", report.ID).
+		log.WithError(err).
 			Warn("seed: get engagement failed; reconciler will retry")
 	} else if s.seeder != nil {
 		seedErr := s.seeder.Seed(ctx, seeder.SeedInput{
@@ -718,12 +728,15 @@ func (s *IngestionService) runParse(
 			Findings:     persisted,
 		}, eng.GraphitiGroupID)
 		if seedErr != nil {
-			s.log.WithError(seedErr).WithField("scan_report_id", report.ID).
+			log.WithError(seedErr).
 				Warn("graphiti seed had errors; reconciler will retry unmarked findings")
 		} else {
+			// TODO(phase-9+): replace this N+1 loop with MarkFindingGraphSeededBulk
+			// once larger parsers (Burp/Twistlock/Qualys) start producing 100s of
+			// findings per report.
 			for _, row := range persisted {
 				if err := s.q.MarkFindingGraphSeeded(ctx, row.ID); err != nil {
-					s.log.WithError(err).WithField("finding_id", row.ID).
+					log.WithError(err).WithField("finding_id", row.ID).
 						Warn("mark graph_seeded_at failed")
 				}
 			}
@@ -744,7 +757,7 @@ func (s *IngestionService) runParse(
 		ParseError:   perr,
 		FindingCount: int32(len(persisted)),
 	}); err != nil {
-		s.log.WithError(err).WithField("scan_report_id", report.ID).
+		log.WithError(err).
 			Warn("update scan report status failed")
 	}
 }
@@ -752,6 +765,13 @@ func (s *IngestionService) runParse(
 // persistBundle upserts every finding in the bundle, attaches a finding_sources
 // row per report, and returns the persisted DB rows (needed for the seeder,
 // whose episode names key off the DB primary key).
+//
+// Not transactional: each upsert is its own round-trip. A mid-bundle failure
+// leaves earlier findings persisted; the controller marks the scan_report as
+// failed but the orphaned findings remain in the DB. Acceptable for nmap-sized
+// bundles (tens of findings) but Phase 9/10 (Twistlock/Qualys, 1000s of
+// findings per report) should wrap this loop in a single transaction via
+// `Queries.WithTx` once we audit the rollback semantics for graphiti seeding.
 func (s *IngestionService) persistBundle(
 	ctx context.Context,
 	report database.ScanReport,

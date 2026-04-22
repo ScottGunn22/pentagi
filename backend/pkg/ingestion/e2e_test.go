@@ -45,7 +45,6 @@ import (
 	"pentagi/pkg/graphiti"
 	"pentagi/pkg/ingestion/engagement"
 	"pentagi/pkg/ingestion/seeder"
-	"pentagi/pkg/server/response"
 	"pentagi/pkg/server/services"
 
 	"github.com/gin-contrib/sessions"
@@ -330,7 +329,3 @@ func buildUpload(t *testing.T, path, sourceType string) (*bytes.Buffer, string) 
 	return buf, mw.FormDataContentType()
 }
 
-// Guard used to dodge "imported and not used" for packages conditionally
-// referenced in other future test cases. Safe to remove when every import
-// has at least one callsite.
-var _ = response.ErrInternal
