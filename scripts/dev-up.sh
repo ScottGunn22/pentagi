@@ -56,6 +56,17 @@ fi
 mkdir -p "${STORAGE_DIR}"
 say "storage dir ready: $(readlink -f "${STORAGE_DIR}")"
 
+# --- Pre-pull the Kali sandbox image -----------------------------------------
+# Flows spawn per-run containers from vxcontrol/kali-linux (~14.6GB). If it's
+# not cached locally, the first flow will appear to hang for 5-15 minutes
+# while it pulls. Pulling here makes the first flow start fast.
+if [[ "${SKIP_KALI_PULL:-0}" != "1" ]]; then
+    if ! docker image inspect vxcontrol/kali-linux:latest >/dev/null 2>&1; then
+        say "pulling vxcontrol/kali-linux:latest (~14.6GB, one-time; set SKIP_KALI_PULL=1 to skip)"
+        docker pull vxcontrol/kali-linux:latest
+    fi
+fi
+
 # --- Compose file assembly ---------------------------------------------------
 
 COMPOSE_FILES=(-f docker-compose.yml)
