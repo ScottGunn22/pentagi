@@ -65,8 +65,10 @@ func NewTester(
 	// Create empty functions definition
 	functions := &tools.Functions{}
 
-	// Initialize tools flowExecutor
-	flowExecutor, err := tools.NewFlowToolsExecutor(db, cfg, dockerClient, functions, flowID, nil)
+	// Initialize tools flowExecutor. ftester has no engagement context, so
+	// engagementID=nil and userID=0 — the engagement-scoped tools (including
+	// record_finding) are skipped in that case.
+	flowExecutor, err := tools.NewFlowToolsExecutor(db, cfg, dockerClient, functions, flowID, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create flow tools executor: %w", err)
 	}

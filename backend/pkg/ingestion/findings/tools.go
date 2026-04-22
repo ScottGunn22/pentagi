@@ -16,12 +16,16 @@ package findings
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"pentagi/pkg/database"
+	"pentagi/pkg/ingestion/scope"
 )
 
 // ---------------------------------------------------------------------
@@ -72,6 +76,23 @@ type GetRetestDiffAction struct {
 	FlowID int64 `json:"flow_id" jsonschema:"required,type=integer" jsonschema_description:"Flow id whose retest diff should be returned. Typically the current flow."`
 }
 
+// RecordFindingAction controls record_finding — the only write-path tool
+// that lets an LLM agent persist a live discovery into the findings table.
+// A synthetic scan_reports row (source_type='agent') is created lazily per
+// flow to satisfy the findings.scan_report_id NOT NULL constraint.
+type RecordFindingAction struct {
+	Title       string          `json:"title" jsonschema:"required" jsonschema_description:"Short human-readable title for the finding (e.g. 'SSRF via image fetch endpoint')."`
+	TargetKind  string          `json:"target_kind" jsonschema:"required,enum=host,enum=web_endpoint,enum=container" jsonschema_description:"Kind of target the finding concerns."`
+	TargetRef   string          `json:"target_ref" jsonschema:"required" jsonschema_description:"Scope-matcher formatted target: 'ip:<ip>[:<port>/<proto>]', 'host:<fqdn>', 'url:<url>', or 'img:<ref>'."`
+	Severity    string          `json:"severity" jsonschema:"required,enum=info,enum=low,enum=medium,enum=high,enum=critical" jsonschema_description:"Severity level."`
+	CVE         string          `json:"cve,omitempty" jsonschema_description:"Optional CVE identifier, e.g. 'CVE-2024-1234'."`
+	CVSSScore   *float64        `json:"cvss_score,omitempty" jsonschema_description:"Optional CVSS base score (0.0 - 10.0)."`
+	Confidence  string          `json:"confidence,omitempty" jsonschema:"enum=certain,enum=firm,enum=tentative" jsonschema_description:"Agent's confidence in the finding (default 'firm')."`
+	SourceID    string          `json:"source_id,omitempty" jsonschema_description:"Optional stable external identifier (e.g. scanner rule id) so re-runs merge cleanly."`
+	Evidence    json.RawMessage `json:"evidence,omitempty" jsonschema_description:"Free-form JSON blob capturing reproducer details (commands, requests, responses)."`
+	FindingType string          `json:"finding_type,omitempty" jsonschema:"enum=vulnerability,enum=web_issue,enum=exposed_service,enum=container_cve,enum=container_compliance,enum=secret_exposure" jsonschema_description:"Finding taxonomy (default 'vulnerability')."`
+}
+
 // Repo is the narrow slice of database.Querier this package needs.
 // Using an interface rather than *database.Queries keeps tests light
 // (see tools_test.go) — the real *database.Queries satisfies it via
@@ -83,26 +104,53 @@ type Repo interface {
 	GetFinding(ctx context.Context, id int64) (database.Finding, error)
 	UpdateFindingVerification(ctx context.Context, arg database.UpdateFindingVerificationParams) (database.Finding, error)
 	ListFlowRetestDiff(ctx context.Context, flowID int64) ([]database.FlowRetestDiff, error)
+
+	// record_finding write path (added for agent-recorded findings).
+	// ListScopeRules is consumed by scope.LoadMatcher to compute the
+	// in_scope flag on the new row, mirroring the controller ingestion
+	// path so the Findings tab stays consistent whether a row came from
+	// a scanner upload or the agent.
+	GetOrCreateAgentScanReport(ctx context.Context, arg database.GetOrCreateAgentScanReportParams) (database.GetOrCreateAgentScanReportRow, error)
+	UpsertFinding(ctx context.Context, arg database.UpsertFindingParams) (database.UpsertFindingRow, error)
+	AttachFindingSource(ctx context.Context, arg database.AttachFindingSourceParams) error
+	ListScopeRules(ctx context.Context, engagementID int64) ([]database.EngagementScopeRule, error)
 }
 
-// Tools bundles the six agent-facing finding handlers. Construct one per
+// Tools bundles the engagement-scoped finding handlers. Construct one per
 // flow at flow-start when the flow has a non-null engagement_id.
+//
+// flowID and userID are used only by record_finding: flowID seeds the
+// deterministic sha256 for the per-flow agent scan_report so repeat calls
+// from the same flow reuse the same parent row, and userID populates the
+// scan_reports.uploaded_by audit column. Zero values are tolerated by the
+// read-only tools; record_finding refuses them explicitly (see the
+// handler's validation).
 type Tools struct {
 	repo         Repo
 	engagementID int64
+	flowID       int64
+	userID       int64
 }
 
 // New returns a Tools bound to engagementID. engagementID must be > 0; a
 // zero value is refused because it would silently match any legacy row
 // whose engagement_id was defaulted to 0.
-func New(repo Repo, engagementID int64) (*Tools, error) {
+//
+// flowID and userID are optional for the read-only tools but required by
+// record_finding — pass 0 when the caller only wants the read surface.
+func New(repo Repo, engagementID, flowID, userID int64) (*Tools, error) {
 	if repo == nil {
 		return nil, errors.New("findings.New: repo is required")
 	}
 	if engagementID <= 0 {
 		return nil, fmt.Errorf("findings.New: engagementID must be positive, got %d", engagementID)
 	}
-	return &Tools{repo: repo, engagementID: engagementID}, nil
+	return &Tools{
+		repo:         repo,
+		engagementID: engagementID,
+		flowID:       flowID,
+		userID:       userID,
+	}, nil
 }
 
 // ---- list_findings ----
@@ -355,4 +403,172 @@ func (t *Tools) GetRetestDiff(ctx context.Context, _ string, raw json.RawMessage
 		return "", fmt.Errorf("get_retest_diff: marshal failed: %w", err)
 	}
 	return string(out), nil
+}
+
+// ---- record_finding ----
+
+// allowedSeverityLevels mirrors database.SeverityLevel enum values. Kept
+// local to keep this file self-contained and avoid a sqlc-generated
+// runtime reflection dependency.
+var allowedSeverityLevels = map[string]database.SeverityLevel{
+	string(database.SeverityLevelInfo):     database.SeverityLevelInfo,
+	string(database.SeverityLevelLow):      database.SeverityLevelLow,
+	string(database.SeverityLevelMedium):   database.SeverityLevelMedium,
+	string(database.SeverityLevelHigh):     database.SeverityLevelHigh,
+	string(database.SeverityLevelCritical): database.SeverityLevelCritical,
+}
+
+var allowedTargetKinds = map[string]database.TargetKind{
+	string(database.TargetKindHost):        database.TargetKindHost,
+	string(database.TargetKindWebEndpoint): database.TargetKindWebEndpoint,
+	string(database.TargetKindContainer):   database.TargetKindContainer,
+}
+
+var allowedFindingTypes = map[string]database.FindingType{
+	string(database.FindingTypeVulnerability):       database.FindingTypeVulnerability,
+	string(database.FindingTypeWebIssue):            database.FindingTypeWebIssue,
+	string(database.FindingTypeExposedService):      database.FindingTypeExposedService,
+	string(database.FindingTypeContainerCve):        database.FindingTypeContainerCve,
+	string(database.FindingTypeContainerCompliance): database.FindingTypeContainerCompliance,
+	string(database.FindingTypeSecretExposure):      database.FindingTypeSecretExposure,
+}
+
+var allowedFindingConfidences = map[string]database.FindingConfidence{
+	string(database.FindingConfidenceCertain):   database.FindingConfidenceCertain,
+	string(database.FindingConfidenceFirm):      database.FindingConfidenceFirm,
+	string(database.FindingConfidenceTentative): database.FindingConfidenceTentative,
+}
+
+// RecordFinding persists an agent-discovered finding into the engagement's
+// Findings table. It lazily creates a synthetic scan_reports row per flow
+// (source_type='agent') so the findings.scan_report_id NOT NULL constraint
+// is satisfied without co-opting a real scanner upload.
+//
+// Out-of-scope findings are stored with in_scope=false rather than
+// rejected: the pentester can still surface them in the Findings tab by
+// toggling the in-scope filter. This mirrors the controller's behavior
+// for scanner uploads.
+func (t *Tools) RecordFinding(ctx context.Context, _ string, raw json.RawMessage) (string, error) {
+	var args RecordFindingAction
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return "", fmt.Errorf("record_finding: invalid arguments: %w", err)
+	}
+	if t.flowID <= 0 {
+		return "", errors.New("record_finding: flow context missing (flowID=0); this tool requires a flow-scoped Tools instance")
+	}
+	if t.userID <= 0 {
+		return "", errors.New("record_finding: user context missing (userID=0); scan_reports.uploaded_by cannot be NULL")
+	}
+	if strings.TrimSpace(args.Title) == "" {
+		return "", errors.New("record_finding: title is required")
+	}
+	if strings.TrimSpace(args.TargetRef) == "" {
+		return "", errors.New("record_finding: target_ref is required")
+	}
+
+	severity, ok := allowedSeverityLevels[strings.ToLower(args.Severity)]
+	if !ok {
+		return "", fmt.Errorf("record_finding: severity must be one of info|low|medium|high|critical, got %q", args.Severity)
+	}
+	targetKind, ok := allowedTargetKinds[strings.ToLower(args.TargetKind)]
+	if !ok {
+		return "", fmt.Errorf("record_finding: target_kind must be one of host|web_endpoint|container, got %q", args.TargetKind)
+	}
+	findingType := database.FindingTypeVulnerability
+	if args.FindingType != "" {
+		ft, ok := allowedFindingTypes[strings.ToLower(args.FindingType)]
+		if !ok {
+			return "", fmt.Errorf("record_finding: finding_type %q is not a recognised enum value", args.FindingType)
+		}
+		findingType = ft
+	}
+	confidence := database.FindingConfidenceFirm
+	if args.Confidence != "" {
+		c, ok := allowedFindingConfidences[strings.ToLower(args.Confidence)]
+		if !ok {
+			return "", fmt.Errorf("record_finding: confidence must be one of certain|firm|tentative, got %q", args.Confidence)
+		}
+		confidence = c
+	}
+	if args.CVSSScore != nil && (*args.CVSSScore < 0 || *args.CVSSScore > 10) {
+		return "", fmt.Errorf("record_finding: cvss_score must be between 0.0 and 10.0, got %v", *args.CVSSScore)
+	}
+
+	// Scope determination — mirror the controller's behavior: store every
+	// finding the agent records, but mark out-of-scope rows so the Findings
+	// tab can filter them out of the default view without losing them.
+	matcher, err := scope.LoadMatcher(ctx, t.repo, t.engagementID)
+	if err != nil {
+		return "", fmt.Errorf("record_finding: load scope matcher: %w", err)
+	}
+	inScope := matcher.InScope(args.TargetRef)
+
+	// Deterministic sha so all record_finding calls from the same flow
+	// share one scan_reports parent row. Using flow_id alone (not a hash
+	// of the finding contents) is intentional — the junction row in
+	// finding_sources already tracks per-finding evidence.
+	sum := sha256.Sum256([]byte(fmt.Sprintf("agent-flow-%d", t.flowID)))
+	sha := hex.EncodeToString(sum[:])
+
+	report, err := t.repo.GetOrCreateAgentScanReport(ctx, database.GetOrCreateAgentScanReportParams{
+		EngagementID:     t.engagementID,
+		Sha256:           sha,
+		OriginalFilename: fmt.Sprintf("flow-%d-agent-findings", t.flowID),
+		StorageUri:       fmt.Sprintf("agent://flow/%d", t.flowID),
+		UploadedBy:       t.userID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("record_finding: get/create agent scan_report: %w", err)
+	}
+
+	evidence := args.Evidence
+	if len(evidence) == 0 {
+		evidence = json.RawMessage(`{}`)
+	}
+
+	var cvss sql.NullString
+	if args.CVSSScore != nil {
+		cvss = sql.NullString{String: fmt.Sprintf("%.1f", *args.CVSSScore), Valid: true}
+	}
+
+	row, err := t.repo.UpsertFinding(ctx, database.UpsertFindingParams{
+		EngagementID: t.engagementID,
+		ScanReportID: report.ID,
+		FindingType:  findingType,
+		TargetKind:   targetKind,
+		TargetRef:    args.TargetRef,
+		Title:        args.Title,
+		Cve:          toNullString(args.CVE),
+		CvssScore:    cvss,
+		Severity:     severity,
+		Confidence:   confidence,
+		SourceID:     toNullString(args.SourceID),
+		Evidence:     evidence,
+		InScope:      inScope,
+	})
+	if err != nil {
+		return "", fmt.Errorf("record_finding: upsert finding: %w", err)
+	}
+
+	// Attach source is audit metadata; a failed insert (e.g. race on the
+	// PK) must not block the agent from moving on. The finding row itself
+	// is already persisted.
+	_ = t.repo.AttachFindingSource(ctx, database.AttachFindingSourceParams{
+		FindingID:      row.ID,
+		ScanReportID:   report.ID,
+		SourceEvidence: evidence,
+	})
+
+	out, err := json.Marshal(row)
+	if err != nil {
+		return "", fmt.Errorf("record_finding: marshal failed: %w", err)
+	}
+	return string(out), nil
+}
+
+func toNullString(s string) sql.NullString {
+	if strings.TrimSpace(s) == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
 }

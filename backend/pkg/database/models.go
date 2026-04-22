@@ -739,6 +739,7 @@ const (
 	ScanSourceTypeTwistlock ScanSourceType = "twistlock"
 	ScanSourceTypeNmap      ScanSourceType = "nmap"
 	ScanSourceTypeBurp      ScanSourceType = "burp"
+	ScanSourceTypeAgent     ScanSourceType = "agent"
 )
 
 func (e *ScanSourceType) Scan(src interface{}) error {

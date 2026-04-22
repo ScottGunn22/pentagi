@@ -324,6 +324,7 @@ func NewFlowToolsExecutor(
 	functions *Functions,
 	flowID int64,
 	engagementID *int64,
+	userID int64,
 ) (FlowToolsExecutor, error) {
 	allPatterns, err := patterns.LoadPatterns(patterns.PatternListTypeAll)
 	if err != nil {
@@ -356,7 +357,10 @@ func NewFlowToolsExecutor(
 	if engagementID != nil && *engagementID > 0 {
 		fte.engagementID = engagementID
 
-		ft, err := findings.New(db, *engagementID)
+		// flowID + userID are required by the record_finding write-path
+		// tool so the synthetic scan_reports parent row has the correct
+		// per-flow sha and uploaded_by audit columns.
+		ft, err := findings.New(db, *engagementID, flowID, userID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to construct findings tools: %w", err)
 		}
@@ -378,8 +382,8 @@ func (fte *flowToolsExecutor) hasEngagement() bool {
 	return fte.engagementID != nil && fte.findingsTools != nil
 }
 
-// appendFindingsTools appends the seven engagement-scoped findings tools to
-// the given definition slice and handlers map. Callers must check
+// appendFindingsTools appends the engagement-scoped findings tools to the
+// given definition slice and handlers map. Callers must check
 // hasEngagement() first; calling this otherwise panics on a nil
 // findingsTools receiver.
 func (fte *flowToolsExecutor) appendFindingsTools(
@@ -395,6 +399,7 @@ func (fte *flowToolsExecutor) appendFindingsTools(
 		registryDefinitions[GetFindingByIDToolName],
 		registryDefinitions[MarkFindingVerifiedToolName],
 		registryDefinitions[GetRetestDiffToolName],
+		registryDefinitions[RecordFindingToolName],
 	)
 	handlers[ListFindingsToolName] = ft.ListFindings
 	handlers[GetTopFindingsByCVSSToolName] = ft.GetTopFindingsByCVSS
@@ -403,6 +408,7 @@ func (fte *flowToolsExecutor) appendFindingsTools(
 	handlers[GetFindingByIDToolName] = ft.GetFindingByID
 	handlers[MarkFindingVerifiedToolName] = ft.MarkFindingVerified
 	handlers[GetRetestDiffToolName] = ft.GetRetestDiff
+	handlers[RecordFindingToolName] = ft.RecordFinding
 	return definitions
 }
 

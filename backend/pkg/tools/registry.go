@@ -49,6 +49,7 @@ const (
 	GetFindingByIDToolName       = "get_finding_by_id"
 	MarkFindingVerifiedToolName  = "mark_finding_verified"
 	GetRetestDiffToolName        = "get_retest_diff"
+	RecordFindingToolName        = "record_finding"
 	ReportResultToolName      = "report_result"
 	SubtaskListToolName       = "subtask_list"
 	SubtaskPatchToolName      = "subtask_patch"
@@ -141,6 +142,9 @@ var toolsTypeMapping = map[string]ToolType{
 	GetFindingByIDToolName:       SearchVectorDbToolType,
 	MarkFindingVerifiedToolName:  StoreAgentResultToolType,
 	GetRetestDiffToolName:        SearchVectorDbToolType,
+	// record_finding is a write-path tool — it persists new rows in the
+	// findings table — so it groups with the other store-agent-result tools.
+	RecordFindingToolName:        StoreAgentResultToolType,
 	ReportResultToolName:      StoreAgentResultToolType,
 	SubtaskListToolName:       StoreAgentResultToolType,
 	SubtaskPatchToolName:      StoreAgentResultToolType,
@@ -388,6 +392,17 @@ var registryDefinitions = map[string]llms.FunctionDefinition{
 			"finding is fixed (absent now), persistent (still present), or new (added since baseline). Use this " +
 			"at the start of a retest_diff flow to understand what changed since the prior engagement pass.",
 		Parameters: reflector.Reflect(&findings.GetRetestDiffAction{}),
+	},
+	RecordFindingToolName: {
+		Name: RecordFindingToolName,
+		Description: "Persist a finding the agent discovered live during this flow into the engagement's " +
+			"Findings table. Use this the moment you confirm a vulnerability, exposed service, misconfiguration, " +
+			"or any other security-relevant observation so the pentester sees it in the Findings tab without " +
+			"waiting for a scanner upload. target_ref must follow the scope-matcher grammar " +
+			"('ip:<ip>[:<port>/<proto>]', 'host:<fqdn>', 'url:<url>', or 'img:<ref>'); out-of-scope targets " +
+			"are stored but tagged in_scope=false. Include reproducer details in the evidence JSON so the " +
+			"finding is actionable (commands executed, requests/responses observed, etc.).",
+		Parameters: reflector.Reflect(&findings.RecordFindingAction{}),
 	},
 	MemoristToolName: {
 		Name:        MemoristToolName,

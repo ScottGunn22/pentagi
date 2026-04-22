@@ -45,6 +45,82 @@ type stubRepo struct {
 	diffFlowID int64
 	diffResult []database.FlowRetestDiff
 	diffErr    error
+
+	// record_finding plumbing
+	scanReport        database.GetOrCreateAgentScanReportRow
+	scanReportParams  database.GetOrCreateAgentScanReportParams
+	scanReportErr     error
+	upsertCalled      bool
+	upsertParams      database.UpsertFindingParams
+	upsertResult      database.UpsertFindingRow
+	upsertErr         error
+	attachCalled      bool
+	attachParams      database.AttachFindingSourceParams
+	attachErr         error
+	scopeRules        []database.EngagementScopeRule
+	scopeRulesErr     error
+	scopeRulesEngID   int64
+}
+
+func (s *stubRepo) GetOrCreateAgentScanReport(_ context.Context, p database.GetOrCreateAgentScanReportParams) (database.GetOrCreateAgentScanReportRow, error) {
+	s.scanReportParams = p
+	if s.scanReportErr != nil {
+		return database.GetOrCreateAgentScanReportRow{}, s.scanReportErr
+	}
+	// Default: echo the inputs into a plausible row so callers that don't
+	// pre-populate scanReport still get non-zero IDs.
+	if s.scanReport.ID == 0 {
+		return database.GetOrCreateAgentScanReportRow{
+			ID:               777,
+			EngagementID:     p.EngagementID,
+			SourceType:       database.ScanSourceTypeAgent,
+			OriginalFilename: p.OriginalFilename,
+			StorageUri:       p.StorageUri,
+			Sha256:           p.Sha256,
+			ParserVersion:    "agent-v1",
+			ParseStatus:      database.ParseStatusSucceeded,
+			UploadedBy:       p.UploadedBy,
+		}, nil
+	}
+	return s.scanReport, nil
+}
+
+func (s *stubRepo) UpsertFinding(_ context.Context, p database.UpsertFindingParams) (database.UpsertFindingRow, error) {
+	s.upsertCalled = true
+	s.upsertParams = p
+	if s.upsertErr != nil {
+		return database.UpsertFindingRow{}, s.upsertErr
+	}
+	if s.upsertResult.ID == 0 {
+		// Echo a plausible row so json.Marshal in RecordFinding doesn't
+		// produce an empty-looking result in happy-path tests.
+		return database.UpsertFindingRow{
+			ID:           999,
+			EngagementID: p.EngagementID,
+			ScanReportID: p.ScanReportID,
+			FindingType:  p.FindingType,
+			TargetKind:   p.TargetKind,
+			TargetRef:    p.TargetRef,
+			Title:        p.Title,
+			Severity:     p.Severity,
+			Confidence:   p.Confidence,
+			Evidence:     p.Evidence,
+			InScope:      p.InScope,
+			IsNew:        true,
+		}, nil
+	}
+	return s.upsertResult, nil
+}
+
+func (s *stubRepo) AttachFindingSource(_ context.Context, p database.AttachFindingSourceParams) error {
+	s.attachCalled = true
+	s.attachParams = p
+	return s.attachErr
+}
+
+func (s *stubRepo) ListScopeRules(_ context.Context, engagementID int64) ([]database.EngagementScopeRule, error) {
+	s.scopeRulesEngID = engagementID
+	return s.scopeRules, s.scopeRulesErr
 }
 
 func (s *stubRepo) ListFindings(_ context.Context, p database.ListFindingsParams) ([]database.Finding, error) {
@@ -92,13 +168,13 @@ func (s *stubRepo) ListFlowRetestDiff(_ context.Context, flowID int64) ([]databa
 // --- constructor ---
 
 func TestNew_RejectsZeroEngagement(t *testing.T) {
-	if _, err := New(&stubRepo{}, 0); err == nil {
+	if _, err := New(&stubRepo{}, 0, 0, 0); err == nil {
 		t.Fatal("expected error for engagementID=0")
 	}
-	if _, err := New(&stubRepo{}, -1); err == nil {
+	if _, err := New(&stubRepo{}, -1, 0, 0); err == nil {
 		t.Fatal("expected error for negative engagementID")
 	}
-	if _, err := New(nil, 5); err == nil {
+	if _, err := New(nil, 5, 0, 0); err == nil {
 		t.Fatal("expected error for nil repo")
 	}
 }
@@ -121,7 +197,7 @@ func TestListFindings_LimitClampAndDefaults(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &stubRepo{}
-			tl, err := New(s, 42)
+			tl, err := New(s, 42, 0, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -144,7 +220,7 @@ func TestListFindings_LimitClampAndDefaults(t *testing.T) {
 
 func TestListFindings_FilterPassthrough(t *testing.T) {
 	s := &stubRepo{}
-	tl, err := New(s, 7)
+	tl, err := New(s, 7, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +246,7 @@ func TestListFindings_FilterPassthrough(t *testing.T) {
 }
 
 func TestListFindings_InvalidJSON(t *testing.T) {
-	tl, err := New(&stubRepo{}, 1)
+	tl, err := New(&stubRepo{}, 1, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +272,7 @@ func TestGetTopFindingsByCVSS_ClampAndEngagement(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &stubRepo{}
-			tl, err := New(s, 11)
+			tl, err := New(s, 11, 0, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -221,7 +297,7 @@ func TestGetTopFindingsByCVSS_ClampAndEngagement(t *testing.T) {
 
 func TestGetHostServices_UsesHostKind(t *testing.T) {
 	s := &stubRepo{}
-	tl, _ := New(s, 3)
+	tl, _ := New(s, 3, 0, 0)
 	if _, err := tl.GetHostServices(context.Background(), "get_host_services", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +311,7 @@ func TestGetHostServices_UsesHostKind(t *testing.T) {
 
 func TestGetContainerCVEs_UsesContainerKind(t *testing.T) {
 	s := &stubRepo{}
-	tl, _ := New(s, 4)
+	tl, _ := New(s, 4, 0, 0)
 	if _, err := tl.GetContainerCVEs(context.Background(), "get_container_cves", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +328,7 @@ func TestGetContainerCVEs_UsesContainerKind(t *testing.T) {
 func TestGetFindingByID_RejectsCrossEngagement(t *testing.T) {
 	// Finding belongs to engagement 7; Tools is bound to engagement 1.
 	s := &stubRepo{finding: database.Finding{ID: 42, EngagementID: 7}}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 
 	_, err := tl.GetFindingByID(context.Background(), "get_finding_by_id", json.RawMessage(`{"id":42}`))
 	if err == nil {
@@ -265,7 +341,7 @@ func TestGetFindingByID_RejectsCrossEngagement(t *testing.T) {
 
 func TestGetFindingByID_AcceptsSameEngagement(t *testing.T) {
 	s := &stubRepo{finding: database.Finding{ID: 42, EngagementID: 1, Title: "demo"}}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 
 	out, err := tl.GetFindingByID(context.Background(), "get_finding_by_id", json.RawMessage(`{"id":42}`))
 	if err != nil {
@@ -277,7 +353,7 @@ func TestGetFindingByID_AcceptsSameEngagement(t *testing.T) {
 }
 
 func TestGetFindingByID_RejectsBadInput(t *testing.T) {
-	tl, _ := New(&stubRepo{}, 1)
+	tl, _ := New(&stubRepo{}, 1, 0, 0)
 	_, err := tl.GetFindingByID(context.Background(), "get_finding_by_id", json.RawMessage(`{"id":0}`))
 	if err == nil {
 		t.Fatal("expected error for id=0")
@@ -292,7 +368,7 @@ func TestGetFindingByID_RejectsBadInput(t *testing.T) {
 
 func TestMarkFindingVerified_RejectsCrossEngagement(t *testing.T) {
 	s := &stubRepo{finding: database.Finding{ID: 99, EngagementID: 2}}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 
 	_, err := tl.MarkFindingVerified(context.Background(), "mark_finding_verified",
 		json.RawMessage(`{"id":99,"verification_status":"confirmed","notes":"exploited"}`))
@@ -309,7 +385,7 @@ func TestMarkFindingVerified_RejectsCrossEngagement(t *testing.T) {
 
 func TestMarkFindingVerified_RejectsInvalidStatus(t *testing.T) {
 	s := &stubRepo{finding: database.Finding{ID: 10, EngagementID: 1}}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 
 	for _, bad := range []string{"", "unverified", "verifying", "maybe", "yes"} {
 		raw := `{"id":10,"verification_status":"` + bad + `"}`
@@ -331,7 +407,7 @@ func TestMarkFindingVerified_HappyPath(t *testing.T) {
 		finding:      database.Finding{ID: 10, EngagementID: 1},
 		updateResult: updated,
 	}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 
 	out, err := tl.MarkFindingVerified(context.Background(), "mark_finding_verified",
 		json.RawMessage(`{"id":10,"verification_status":"confirmed","notes":"RCE confirmed via payload X"}`))
@@ -363,7 +439,7 @@ func TestMarkFindingVerified_EmptyNotesStaysNull(t *testing.T) {
 		finding:      database.Finding{ID: 10, EngagementID: 1},
 		updateResult: database.Finding{ID: 10, EngagementID: 1},
 	}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 	if _, err := tl.MarkFindingVerified(context.Background(), "mark_finding_verified",
 		json.RawMessage(`{"id":10,"verification_status":"false_positive"}`)); err != nil {
 		t.Fatal(err)
@@ -387,7 +463,7 @@ func TestGetRetestDiff_HappyPath(t *testing.T) {
 		{FlowID: 42, FindingID: 2, DiffState: database.DiffStatePersistent},
 	}
 	s := &stubRepo{diffResult: want}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 	got, err := tl.GetRetestDiff(context.Background(), "get_retest_diff", json.RawMessage(`{"flow_id":42}`))
 	if err != nil {
 		t.Fatalf("GetRetestDiff: %v", err)
@@ -402,7 +478,7 @@ func TestGetRetestDiff_HappyPath(t *testing.T) {
 
 func TestGetRetestDiff_RejectsInvalidFlowID(t *testing.T) {
 	s := &stubRepo{}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 	if _, err := tl.GetRetestDiff(context.Background(), "get_retest_diff", json.RawMessage(`{"flow_id":0}`)); err == nil {
 		t.Fatal("expected error for flow_id=0")
 	}
@@ -416,8 +492,192 @@ func TestGetRetestDiff_RejectsInvalidFlowID(t *testing.T) {
 
 func TestGetRetestDiff_MalformedJSON(t *testing.T) {
 	s := &stubRepo{}
-	tl, _ := New(s, 1)
+	tl, _ := New(s, 1, 0, 0)
 	if _, err := tl.GetRetestDiff(context.Background(), "get_retest_diff", json.RawMessage(`{bad json}`)); err == nil {
 		t.Fatal("expected error for malformed JSON")
+	}
+}
+
+// --- record_finding ---
+
+// scopeInclude builds a scope.ListScopeRules result that includes the given
+// rule values, so the loaded matcher classifies the target as in-scope. We
+// use the SCIDR include form because it exercises the most of the matcher
+// code path; any include direction would do.
+func includeScopeRules(values ...string) []database.EngagementScopeRule {
+	rows := make([]database.EngagementScopeRule, 0, len(values))
+	for i, v := range values {
+		rows = append(rows, database.EngagementScopeRule{
+			ID:           int64(i + 1),
+			EngagementID: 1,
+			RuleType:     database.ScopeRuleTypeCidr,
+			Value:        v,
+			Direction:    database.ScopeDirectionInclude,
+		})
+	}
+	return rows
+}
+
+func TestRecordFinding_HappyPath(t *testing.T) {
+	s := &stubRepo{scopeRules: includeScopeRules("10.1.2.0/24")}
+	// flowID=42, userID=7 -> synthetic scan_reports row should carry those.
+	tl, err := New(s, 1, 42, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{
+		"title": "SSRF via image-fetch endpoint",
+		"target_kind": "host",
+		"target_ref": "ip:10.1.2.3:443/tcp",
+		"severity": "high",
+		"cve": "CVE-2024-0001",
+		"cvss_score": 8.2,
+		"confidence": "firm",
+		"source_id": "agent-ssrf-1",
+		"evidence": {"req": "GET /image?u=http://169.254.169.254"}
+	}`
+	out, err := tl.RecordFinding(context.Background(), "record_finding", json.RawMessage(raw))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !s.upsertCalled {
+		t.Fatal("repo.UpsertFinding was not called")
+	}
+	if s.upsertParams.EngagementID != 1 {
+		t.Errorf("engagement_id = %d, want 1", s.upsertParams.EngagementID)
+	}
+	if s.upsertParams.ScanReportID == 0 {
+		t.Error("scan_report_id must be non-zero (synthetic scan_reports row)")
+	}
+	if s.upsertParams.Severity != database.SeverityLevelHigh {
+		t.Errorf("severity = %q, want %q", s.upsertParams.Severity, database.SeverityLevelHigh)
+	}
+	if s.upsertParams.TargetKind != database.TargetKindHost {
+		t.Errorf("target_kind = %q, want %q", s.upsertParams.TargetKind, database.TargetKindHost)
+	}
+	if s.upsertParams.Title != "SSRF via image-fetch endpoint" {
+		t.Errorf("title = %q", s.upsertParams.Title)
+	}
+	if s.upsertParams.TargetRef != "ip:10.1.2.3:443/tcp" {
+		t.Errorf("target_ref = %q", s.upsertParams.TargetRef)
+	}
+	if !s.upsertParams.InScope {
+		t.Error("target should be in-scope given the 10.1.2.0/24 include rule")
+	}
+	if s.upsertParams.Cve.String != "CVE-2024-0001" || !s.upsertParams.Cve.Valid {
+		t.Errorf("cve not forwarded: %+v", s.upsertParams.Cve)
+	}
+	if s.upsertParams.CvssScore.String != "8.2" || !s.upsertParams.CvssScore.Valid {
+		t.Errorf("cvss_score not forwarded: %+v", s.upsertParams.CvssScore)
+	}
+	if s.upsertParams.SourceID.String != "agent-ssrf-1" || !s.upsertParams.SourceID.Valid {
+		t.Errorf("source_id not forwarded: %+v", s.upsertParams.SourceID)
+	}
+	if s.upsertParams.Confidence != database.FindingConfidenceFirm {
+		t.Errorf("confidence = %q", s.upsertParams.Confidence)
+	}
+	if s.upsertParams.FindingType != database.FindingTypeVulnerability {
+		t.Errorf("finding_type default = %q", s.upsertParams.FindingType)
+	}
+	// Synthetic scan_reports row should be per-flow.
+	if s.scanReportParams.EngagementID != 1 {
+		t.Errorf("scan_report engagement_id = %d", s.scanReportParams.EngagementID)
+	}
+	if s.scanReportParams.UploadedBy != 7 {
+		t.Errorf("scan_report uploaded_by = %d, want 7", s.scanReportParams.UploadedBy)
+	}
+	if !strings.Contains(s.scanReportParams.OriginalFilename, "flow-42") {
+		t.Errorf("scan_report filename = %q, want to mention flow-42", s.scanReportParams.OriginalFilename)
+	}
+	if !s.attachCalled {
+		t.Error("AttachFindingSource should have been invoked")
+	}
+	if !strings.Contains(out, `"id":999`) {
+		t.Errorf("output should include the upserted row id; got %s", out)
+	}
+}
+
+func TestRecordFinding_RejectsBadArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"empty title", `{"target_kind":"host","target_ref":"ip:10.1.2.3","severity":"high"}`},
+		{"empty target_ref", `{"title":"x","target_kind":"host","target_ref":"","severity":"high"}`},
+		{"missing target_kind", `{"title":"x","target_ref":"ip:10.1.2.3","severity":"high"}`},
+		{"bogus severity", `{"title":"x","target_kind":"host","target_ref":"ip:10.1.2.3","severity":"hugely"}`},
+		{"invalid json", `{not json`},
+		{"cvss too high", `{"title":"x","target_kind":"host","target_ref":"ip:1.2.3.4","severity":"high","cvss_score":11}`},
+		{"bad confidence", `{"title":"x","target_kind":"host","target_ref":"ip:1.2.3.4","severity":"high","confidence":"guessing"}`},
+		{"bad finding_type", `{"title":"x","target_kind":"host","target_ref":"ip:1.2.3.4","severity":"high","finding_type":"made_up"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &stubRepo{scopeRules: includeScopeRules("10.1.2.0/24")}
+			tl, _ := New(s, 1, 42, 7)
+			if _, err := tl.RecordFinding(context.Background(), "record_finding", json.RawMessage(tc.raw)); err == nil {
+				t.Fatalf("expected error")
+			}
+			if s.upsertCalled {
+				t.Fatal("UpsertFinding must not be called when validation fails")
+			}
+		})
+	}
+}
+
+func TestRecordFinding_OutOfScopeStillStored(t *testing.T) {
+	// Scope only includes 10.0.0.0/8; the agent target lives in 192.168/16.
+	s := &stubRepo{scopeRules: includeScopeRules("10.0.0.0/8")}
+	tl, _ := New(s, 1, 42, 7)
+	raw := `{
+		"title": "Exposed admin panel outside declared scope",
+		"target_kind": "web_endpoint",
+		"target_ref": "url:http://192.168.50.1/admin",
+		"severity": "medium"
+	}`
+	if _, err := tl.RecordFinding(context.Background(), "record_finding", json.RawMessage(raw)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !s.upsertCalled {
+		t.Fatal("UpsertFinding should have been called — out-of-scope findings are stored, not rejected")
+	}
+	if s.upsertParams.InScope {
+		t.Error("in_scope should be false for 192.168.50.1 when scope is 10.0.0.0/8")
+	}
+}
+
+func TestRecordFinding_RequiresFlowAndUser(t *testing.T) {
+	s := &stubRepo{scopeRules: includeScopeRules("10.0.0.0/8")}
+	// flowID=0 — record_finding has nothing to key the synthetic report on.
+	tl, _ := New(s, 1, 0, 7)
+	raw := `{"title":"x","target_kind":"host","target_ref":"ip:10.1.1.1","severity":"low"}`
+	if _, err := tl.RecordFinding(context.Background(), "record_finding", json.RawMessage(raw)); err == nil {
+		t.Fatal("expected error when flowID is zero")
+	}
+	// userID=0 — scan_reports.uploaded_by is NOT NULL.
+	tl2, _ := New(s, 1, 42, 0)
+	if _, err := tl2.RecordFinding(context.Background(), "record_finding", json.RawMessage(raw)); err == nil {
+		t.Fatal("expected error when userID is zero")
+	}
+}
+
+func TestRecordFinding_DeterministicScanReportSha(t *testing.T) {
+	// Two record_finding calls from the same flow must hit
+	// GetOrCreateAgentScanReport with identical sha256 values, so repeat
+	// agent writes share the same scan_reports parent row.
+	s := &stubRepo{scopeRules: includeScopeRules("10.0.0.0/8")}
+	tl, _ := New(s, 1, 42, 7)
+	raw1 := `{"title":"one","target_kind":"host","target_ref":"ip:10.1.1.1","severity":"low"}`
+	raw2 := `{"title":"two","target_kind":"host","target_ref":"ip:10.1.1.2","severity":"high"}`
+	if _, err := tl.RecordFinding(context.Background(), "record_finding", json.RawMessage(raw1)); err != nil {
+		t.Fatal(err)
+	}
+	first := s.scanReportParams.Sha256
+	if _, err := tl.RecordFinding(context.Background(), "record_finding", json.RawMessage(raw2)); err != nil {
+		t.Fatal(err)
+	}
+	second := s.scanReportParams.Sha256
+	if first == "" || first != second {
+		t.Errorf("sha must be deterministic per-flow; got %q then %q", first, second)
 	}
 }

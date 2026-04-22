@@ -127,6 +127,12 @@ type Querier interface {
 	GetMsgChain(ctx context.Context, id int64) (Msgchain, error)
 	// Get all msgchains for a flow (including task and subtask level)
 	GetMsgchainsForFlow(ctx context.Context, flowID int64) ([]GetMsgchainsForFlowRow, error)
+	// Returns the scan_report row that holds agent-recorded findings for the
+	// given (engagement_id, flow-deterministic sha256) pair, creating one on
+	// the first call. Re-entrant tool calls within the same flow share the
+	// same scan_report so the findings table stays tidy (one agent-source row
+	// per flow, not one per finding).
+	GetOrCreateAgentScanReport(ctx context.Context, arg GetOrCreateAgentScanReportParams) (GetOrCreateAgentScanReportRow, error)
 	GetPrompts(ctx context.Context) ([]Prompt, error)
 	GetProvider(ctx context.Context, id int64) (Provider, error)
 	GetProviders(ctx context.Context) ([]Provider, error)
