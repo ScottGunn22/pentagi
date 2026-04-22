@@ -66,7 +66,8 @@ func NewIngestionService(
 		log:        log,
 		parsers: map[schema.ScanSourceType]parsers.Parser{
 			schema.SourceNmap: &parsers.NmapParser{},
-			// Phase 8+ will register burp / twistlock / qualys parsers here.
+			schema.SourceBurp: &parsers.BurpParser{},
+			// Phase 9+ will register twistlock / qualys parsers here.
 		},
 	}
 }
