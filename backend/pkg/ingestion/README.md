@@ -8,7 +8,7 @@ Scanner report ingestion + Engagement lifecycle for PentAGI.
 - Parses them into a normalized in-memory schema.
 - Persists findings to Postgres (deduped per `(engagement, target_ref, cve, source_id)`).
 - Seeds them into a per-Engagement Graphiti partition so the LLM agents have prior context.
-- Hard-gates every agent tool call so the agents physically cannot scan/exploit out-of-scope targets.
+- Hard-gates browser-tool calls so the agents physically cannot fetch out-of-scope URLs. **Important v1 limitation:** the freeform `terminal` and `file` tools currently pass through the gate (their args are unparseable command lines). An agent can therefore still target out-of-scope hosts by shell-invoking `nmap`/`curl` etc. directly. See "Known v2 follow-ups" below — this is the single biggest open security item.
 - Surfaces three flow types — new test, retest with diff, targeted re-verification — that share the same agent toolset but differ in pre-flight context and prompt nudge.
 
 ## Sub-packages
@@ -91,11 +91,16 @@ Structured log fields on every parse (`runParse`, `persistBundle`): `engagement_
 
 ## Known v2 follow-ups
 
-- Per-engagement RBAC (currently any authenticated user can access any engagement).
-- Bulk `MarkFindingGraphSeeded` query (current loop is N+1).
+- **CRITICAL — terminal/file tool scope-gate gap.** Only the `browser` tool implements `scope.TargetExtractor`. The freeform `terminal` and `file` tools return `nil` from `Targets()`, which the gate treats as "no targetable args, pass through." An agent can therefore execute `nmap 10.99.0.0/16` from the shell and the gate never sees the target. Two reasonable mitigations to consider when this lands in v2:
+  - A heuristic command-line tokenizer that emits Targets for any token parsing as `net.ParseIP` / `net.ParseCIDR` / `url.Parse` / hostname-glob. False-negative-prone but blocks the obvious cases.
+  - Post-hoc stdout redaction of OOS IPs before the response goes back to the agent. Defense-in-depth, won't stop side effects (the scan happened) but reduces information leakage to the LLM.
+  Until then, treat engagement-scoped flows as "soft" scope enforcement with a strong audit trail (`scope_violations` table for the browser-class blocks) rather than a hard guarantee.
+- Per-engagement RBAC (currently any authenticated user can access any engagement, including `DownloadReport`'s raw bytes — the highest exfiltration surface).
+- Bulk `MarkFindingGraphSeeded` query (current loop is N+1; matters at Twistlock/Qualys scale).
 - `persistBundle` wrapped in a transaction (rollback semantics vs. partial Graphiti seed need an audit first).
-- Subscription publish wiring (declarations in place in the GraphQL schema; no events emitted yet).
-- Stdout-IP redaction for the freeform terminal/executor tools.
+- Subscription publish wiring (declarations in place in the GraphQL schema; no events emitted yet — frontend currently `refetch`es after each upload).
+- Reconciler driver — currently invokable via `seeder.Reconciler.ReconcileOnce(ctx, limit)` but not on a timer; wire a 30s ticker in `cmd/pentagi/main.go` or a separate `cmd/reconciler/`.
+- Frontend flow-create form: GraphQL `createFlow` accepts `engagementId`/`flowType`/`baselineFlowId`/`retestTargetFindingIds` (Phase 14+ wiring) but the existing `frontend/src/features/flows/flow-form.tsx` does not yet expose these fields. Wire them in to make the engagement-aware flow creation reachable from the UI.
 - "Verify findings first" orchestrator workflow (data model in place; orchestration deferred).
 - Populate `regressed` bucket in `ComputeRetestDiff` once verification history lands.
 
