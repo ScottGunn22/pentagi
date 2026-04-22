@@ -10,6 +10,7 @@ import (
 	"pentagi/pkg/database"
 	"pentagi/pkg/docker"
 	"pentagi/pkg/graphiti"
+	"pentagi/pkg/ingestion"
 	"pentagi/pkg/ingestion/findings"
 	"pentagi/pkg/ingestion/scope"
 	"pentagi/pkg/providers/embeddings"
@@ -21,6 +22,8 @@ import (
 	"github.com/vxcontrol/cloud/anonymizer/patterns"
 	"github.com/vxcontrol/langchaingo/llms"
 	"github.com/vxcontrol/langchaingo/vectorstores/pgvector"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type ExecutorHandler func(ctx context.Context, name string, args json.RawMessage) (string, error)
@@ -461,6 +464,17 @@ func (fte *flowToolsExecutor) wrapWithScopeGate(
 			ToolName:     toolName,
 			Target:       target,
 		})
+		// Metric counterpart. flow_type isn't available at this layer — the
+		// spec originally requested a {tool, flow_type} label pair but the
+		// flow_type enum lives on the flows table in the DB only. flow_id
+		// preserves the same cardinality ceiling (one series per active flow)
+		// and can be joined back to the flows table in PromQL if needed.
+		if c := ingestion.ScopeViolationsCounter(); c != nil {
+			c.Add(context.Background(), 1, metric.WithAttributes(
+				attribute.String("tool", toolName),
+				attribute.Int64("flow_id", fte.flowID),
+			))
+		}
 	}
 
 	wrapped := make(map[string]ExecutorHandler, len(handlers))

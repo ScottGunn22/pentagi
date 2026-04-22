@@ -23,18 +23,23 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"pentagi/pkg/database"
+	"pentagi/pkg/ingestion"
 	"pentagi/pkg/ingestion/engagement"
 	"pentagi/pkg/ingestion/parsers"
 	"pentagi/pkg/ingestion/schema"
 	"pentagi/pkg/ingestion/scope"
 	"pentagi/pkg/ingestion/seeder"
+	obs "pentagi/pkg/observability"
 	"pentagi/pkg/server/logger"
 	"pentagi/pkg/server/response"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // IngestionService is the REST-layer service for the scanner-ingestion feature.
@@ -347,10 +352,15 @@ func (s *IngestionService) DeleteScopeRule(c *gin.Context) {
 // @Failure 409 {object} response.errorResp "already ingested"
 // @Router /engagements/{id}/reports [post]
 func (s *IngestionService) UploadReport(c *gin.Context) {
+	ctx, span := obs.Observer.NewSpan(c.Request.Context(), obs.SpanKindServer, "ingestion.upload")
+	defer span.End()
+	c.Request = c.Request.WithContext(ctx)
+
 	engID, ok := parseInt64Param(c, "id")
 	if !ok {
 		return
 	}
+	span.SetAttributes(attribute.Int64("engagement_id", engID))
 
 	sourceType := schema.ScanSourceType(c.PostForm("source_type"))
 	if _, ok := s.parsers[sourceType]; !ok {
@@ -358,6 +368,7 @@ func (s *IngestionService) UploadReport(c *gin.Context) {
 			fmt.Errorf("unsupported source_type %q", sourceType))
 		return
 	}
+	span.SetAttributes(attribute.String("source_type", string(sourceType)))
 
 	fh, err := c.FormFile("file")
 	if err != nil {
@@ -445,6 +456,18 @@ func (s *IngestionService) UploadReport(c *gin.Context) {
 		logger.FromContext(c).WithError(err).Error("scan report create")
 		response.Error(c, response.ErrInternal, err)
 		return
+	}
+	span.SetAttributes(attribute.Int64("scan_report_id", row.ID))
+
+	// Record the upload in flight; terminal status counters are emitted later
+	// from runParse once the parse resolves to succeeded/partial/failed.
+	if rc := ingestion.ReportsCounter(); rc != nil {
+		rc.Add(c.Request.Context(), 1,
+			metric.WithAttributes(
+				attribute.String("source", string(sourceType)),
+				attribute.String("status", "pending"),
+			),
+		)
 	}
 
 	// Fire-and-forget async parse. Use a detached background context so the
@@ -676,6 +699,19 @@ func (s *IngestionService) runParse(
 	source schema.ScanSourceType,
 	path string,
 ) {
+	// Observability prelude. The OTEL span covers the whole parse + persist
+	// + seed pipeline so traces correlate the three sub-operations without
+	// needing the caller to hold a parent. Metrics are emitted at each
+	// terminal branch (failed / partial / succeeded).
+	ctx, span := obs.Observer.NewSpan(ctx, obs.SpanKindInternal, "ingestion.parse."+string(source))
+	defer span.End()
+	span.SetAttributes(
+		attribute.Int64("scan_report_id", report.ID),
+		attribute.Int64("engagement_id", report.EngagementID),
+		attribute.String("source_type", string(source)),
+	)
+	parseStart := time.Now()
+
 	// Bind the parse log entry to the report+engagement once so every
 	// downstream warn/error inside this goroutine is correlatable. The
 	// caller passes context.Background() (request cancellation must not
@@ -686,32 +722,81 @@ func (s *IngestionService) runParse(
 		"source_type":    string(source),
 	})
 
+	// incReport bumps ingestion_reports_total at a terminal status. Kept as a
+	// closure so each early-return branch can tag the right status label
+	// without copy-pasting the attribute slice.
+	incReport := func(status string) {
+		if rc := ingestion.ReportsCounter(); rc != nil {
+			rc.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("source", string(source)),
+				attribute.String("status", status),
+			))
+		}
+	}
+	// observeDuration records the end-to-end parse/persist duration as a
+	// histogram sample. Emitted in every terminal branch so failures are
+	// represented in the distribution (not just successes).
+	observeDuration := func() {
+		if h := ingestion.ParseDurationHistogram(); h != nil {
+			h.Record(ctx, time.Since(parseStart).Seconds(),
+				metric.WithAttributes(attribute.String("source", string(source))),
+			)
+		}
+	}
+
 	p, ok := s.parsers[source]
 	if !ok {
-		_ = s.markFailed(ctx, report.ID, fmt.Errorf("no parser registered for %q", source))
+		err := fmt.Errorf("no parser registered for %q", source)
+		span.RecordError(err)
+		log.WithError(err).WithField("duration_ms", time.Since(parseStart).Milliseconds()).
+			Error("runParse: no parser registered")
+		_ = s.markFailed(ctx, report.ID, err)
+		incReport("failed")
+		observeDuration()
 		return
 	}
 
 	f, err := os.Open(path)
 	if err != nil {
+		span.RecordError(err)
+		log.WithError(err).WithField("duration_ms", time.Since(parseStart).Milliseconds()).
+			Error("runParse: open report file")
 		_ = s.markFailed(ctx, report.ID, err)
+		incReport("failed")
+		observeDuration()
 		return
 	}
 	defer f.Close()
 
 	bundle, parseErr := p.Parse(f)
 	if parseErr != nil && !errors.Is(parseErr, parsers.ErrPartial) {
+		span.RecordError(parseErr)
+		log.WithError(parseErr).WithField("duration_ms", time.Since(parseStart).Milliseconds()).
+			Error("runParse: parser returned fatal error")
 		_ = s.markFailed(ctx, report.ID, parseErr)
+		incReport("failed")
+		observeDuration()
 		return
 	}
 	if bundle == nil {
-		_ = s.markFailed(ctx, report.ID, errors.New("parser returned nil bundle"))
+		err := errors.New("parser returned nil bundle")
+		span.RecordError(err)
+		log.WithError(err).WithField("duration_ms", time.Since(parseStart).Milliseconds()).
+			Error("runParse: nil bundle")
+		_ = s.markFailed(ctx, report.ID, err)
+		incReport("failed")
+		observeDuration()
 		return
 	}
 
 	persisted, err := s.persistBundle(ctx, report, bundle)
 	if err != nil {
+		span.RecordError(err)
+		log.WithError(err).WithField("duration_ms", time.Since(parseStart).Milliseconds()).
+			Error("runParse: persistBundle failed")
 		_ = s.markFailed(ctx, report.ID, err)
+		incReport("failed")
+		observeDuration()
 		return
 	}
 
@@ -719,10 +804,17 @@ func (s *IngestionService) runParse(
 	// so the reconciler (Phase 6) retries them on its next tick.
 	eng, err := s.q.GetEngagement(ctx, report.EngagementID)
 	if err != nil {
-		log.WithError(err).
+		log.WithError(err).WithField("finding_count", len(persisted)).
 			Warn("seed: get engagement failed; reconciler will retry")
 	} else if s.seeder != nil {
-		seedErr := s.seeder.Seed(ctx, seeder.SeedInput{
+		seedCtx, seedSpan := obs.Observer.NewSpan(ctx, obs.SpanKindInternal, "ingestion.seed")
+		seedSpan.SetAttributes(
+			attribute.Int64("scan_report_id", report.ID),
+			attribute.Int64("engagement_id", report.EngagementID),
+			attribute.String("source_type", string(source)),
+			attribute.Int("finding_count", len(persisted)),
+		)
+		seedErr := s.seeder.Seed(seedCtx, seeder.SeedInput{
 			SourceType:   source,
 			Hosts:        bundle.Hosts,
 			Containers:   bundle.Containers,
@@ -730,7 +822,11 @@ func (s *IngestionService) runParse(
 			Findings:     persisted,
 		}, eng.GraphitiGroupID)
 		if seedErr != nil {
-			log.WithError(seedErr).
+			seedSpan.RecordError(seedErr)
+			if sf := ingestion.SeedFailuresCounter(); sf != nil {
+				sf.Add(ctx, 1)
+			}
+			log.WithError(seedErr).WithField("finding_count", len(persisted)).
 				Warn("graphiti seed had errors; reconciler will retry unmarked findings")
 		} else {
 			// TODO(phase-9+): replace this N+1 loop with MarkFindingGraphSeededBulk
@@ -743,14 +839,17 @@ func (s *IngestionService) runParse(
 				}
 			}
 		}
+		seedSpan.End()
 	}
 
 	status := database.ParseStatusSucceeded
+	statusLabel := "succeeded"
 	var perr sql.NullString
 	if parseErr != nil {
 		// Must be ErrPartial at this point — it was the only non-nil branch
 		// we allowed to reach here.
 		status = database.ParseStatusPartial
+		statusLabel = "partial"
 		perr = sql.NullString{String: parseErr.Error(), Valid: true}
 	}
 	if err := s.q.UpdateScanReportStatus(ctx, database.UpdateScanReportStatusParams{
@@ -759,9 +858,36 @@ func (s *IngestionService) runParse(
 		ParseError:   perr,
 		FindingCount: int32(len(persisted)),
 	}); err != nil {
-		log.WithError(err).
+		log.WithError(err).WithField("finding_count", len(persisted)).
 			Warn("update scan report status failed")
 	}
+
+	// Terminal metrics + structured log. finding_count + duration_ms on the
+	// final "parse complete" log line gives ops a single grep target for
+	// end-to-end ingest latency and volume.
+	span.SetAttributes(
+		attribute.Int("finding_count", len(persisted)),
+		attribute.String("status", statusLabel),
+	)
+	incReport(statusLabel)
+	observeDuration()
+	if fc := ingestion.FindingsCounter(); fc != nil {
+		bySeverity := make(map[string]int64, 5)
+		for _, row := range persisted {
+			bySeverity[string(row.Severity)]++
+		}
+		for sev, n := range bySeverity {
+			fc.Add(ctx, n, metric.WithAttributes(
+				attribute.String("source", string(source)),
+				attribute.String("severity", sev),
+			))
+		}
+	}
+	log.WithFields(logrus.Fields{
+		"finding_count": len(persisted),
+		"duration_ms":   time.Since(parseStart).Milliseconds(),
+		"status":        statusLabel,
+	}).Info("runParse: complete")
 }
 
 // persistBundle upserts every finding in the bundle, attaches a finding_sources
@@ -779,8 +905,17 @@ func (s *IngestionService) persistBundle(
 	report database.ScanReport,
 	b *schema.ReportBundle,
 ) ([]database.Finding, error) {
+	ctx, span := obs.Observer.NewSpan(ctx, obs.SpanKindInternal, "ingestion.persist")
+	defer span.End()
+	span.SetAttributes(
+		attribute.Int64("scan_report_id", report.ID),
+		attribute.Int64("engagement_id", report.EngagementID),
+		attribute.Int("bundle_finding_count", len(b.Findings)),
+	)
+
 	matcher, err := scope.LoadMatcher(ctx, s.q, report.EngagementID)
 	if err != nil {
+		span.RecordError(err)
 		return nil, fmt.Errorf("load scope matcher: %w", err)
 	}
 
@@ -803,6 +938,7 @@ func (s *IngestionService) persistBundle(
 			InScope:      inScope,
 		})
 		if err != nil {
+			span.RecordError(err)
 			return nil, fmt.Errorf("upsert finding %q: %w", f.Target.Ref, err)
 		}
 		// Attach junction row so multi-source findings are traceable.
@@ -811,6 +947,7 @@ func (s *IngestionService) persistBundle(
 			ScanReportID:   report.ID,
 			SourceEvidence: evidenceOrEmpty(f.Evidence),
 		}); err != nil {
+			span.RecordError(err)
 			return nil, fmt.Errorf("attach finding_source %d: %w", row.ID, err)
 		}
 
@@ -840,6 +977,7 @@ func (s *IngestionService) persistBundle(
 			UpdatedAt:          row.UpdatedAt,
 		})
 	}
+	span.SetAttributes(attribute.Int("persisted_finding_count", len(out)))
 	return out, nil
 }
 
