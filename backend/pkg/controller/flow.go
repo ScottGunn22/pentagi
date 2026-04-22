@@ -107,6 +107,45 @@ func (fwc *newFlowWorkerCtx) validateEngagementParams() error {
 	return nil
 }
 
+// engagementPromptNudge returns a short context block the agent should see
+// ahead of the user's initial prompt when the flow has engagement context.
+// The block summarises ingested findings by severity and tells the agent
+// which tools to reach for first. Returns "" for legacy flows or on lookup
+// errors (best-effort — a missing nudge should not prevent the flow from
+// running).
+func (fwc *newFlowWorkerCtx) engagementPromptNudge(ctx context.Context, flow database.Flow) string {
+	if !flow.EngagementID.Valid {
+		return ""
+	}
+	eng, err := fwc.db.GetEngagement(ctx, flow.EngagementID.Int64)
+	if err != nil {
+		return ""
+	}
+	stats, err := fwc.db.EngagementFindingStats(ctx, flow.EngagementID.Int64)
+	if err != nil {
+		return ""
+	}
+	block := fmt.Sprintf(
+		"Engagement: %s (client: %s)\nIngested findings: %d critical, %d high, %d medium, %d low, %d info.\n"+
+			"Before re-running recon, call list_findings or get_top_findings_by_cvss to consult existing\n"+
+			"scanner data. When you've verified a finding, record the result with mark_finding_verified.\n"+
+			"Every tool call is checked against the engagement's scope rules — out-of-scope calls are\n"+
+			"blocked and audited.",
+		eng.Name, eng.Client,
+		stats.CriticalCount, stats.HighCount, stats.MediumCount, stats.LowCount, stats.InfoCount,
+	)
+	switch flow.FlowType {
+	case database.FlowTypeRetestDiff:
+		block += "\n\nThis is a retest_diff flow. Call get_retest_diff to see what changed since the baseline flow " +
+			"(fixed / persistent / new). Focus your effort on persistent and new findings."
+	case database.FlowTypeTargetedReverify:
+		block += "\n\nThis is a targeted_reverify flow. Only the findings in flow_retest_targets are in scope for this " +
+			"run — use list_findings to list them, re-verify with real exploits, and record conclusions via " +
+			"mark_finding_verified."
+	}
+	return block
+}
+
 // applyEngagementToFlow runs the flow-type pre-flight: patches the flow row
 // with engagement/flow_type/baseline columns, then populates
 // flow_retest_targets (for targeted_reverify) or flow_retest_diff (for
@@ -418,7 +457,11 @@ func NewFlowWorker(
 	go fw.worker()
 
 	if !fwc.dryRun {
-		if err := fw.PutInput(ctx, fwc.input, nil); err != nil {
+		initialInput := fwc.input
+		if nudge := fwc.engagementPromptNudge(ctx, flow); nudge != "" {
+			initialInput = nudge + "\n\nUser request:\n" + initialInput
+		}
+		if err := fw.PutInput(ctx, initialInput, nil); err != nil {
 			return nil, wrapErrorEndSpan(ctx, flowSpan, "failed to run flow worker", err)
 		}
 	}
