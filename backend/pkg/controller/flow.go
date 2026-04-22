@@ -27,6 +27,29 @@ import (
 
 const stopTaskTimeout = 5 * time.Second
 
+// flowEngagementID extracts the optional engagement_id from a flow row as a
+// *int64 suitable for tools.NewFlowToolsExecutor. Legacy flows whose
+// engagement_id is NULL return nil; engagement-aware flows return a pointer
+// to the id.
+func flowEngagementID(flow database.Flow) *int64 {
+	if !flow.EngagementID.Valid {
+		return nil
+	}
+	id := flow.EngagementID.Int64
+	return &id
+}
+
+// flowEngagementIDByID is the lookup variant — used from code paths that
+// don't already hold a database.Flow row (assistant.go). Returns nil on any
+// error so legacy flows aren't blocked by engagement-lookup failures.
+func flowEngagementIDByID(ctx context.Context, db database.Querier, flowID int64) *int64 {
+	flow, err := db.GetFlow(ctx, flowID)
+	if err != nil {
+		return nil
+	}
+	return flowEngagementID(flow)
+}
+
 type FlowWorker interface {
 	GetFlowID() int64
 	GetUserID() int64
@@ -167,7 +190,7 @@ func NewFlowWorker(
 	ctx, _ = flowSpan.Observation(ctx)
 
 	prompter := templates.NewDefaultPrompter() // TODO: change to flow prompter by userID from DB
-	executor, err := tools.NewFlowToolsExecutor(fwc.db, fwc.cfg, fwc.docker, fwc.functions, flow.ID)
+	executor, err := tools.NewFlowToolsExecutor(fwc.db, fwc.cfg, fwc.docker, fwc.functions, flow.ID, flowEngagementID(flow))
 	if err != nil {
 		return nil, wrapErrorEndSpan(ctx, flowSpan, "failed to create flow tools executor", err)
 	}
@@ -333,7 +356,7 @@ func LoadFlowWorker(ctx context.Context, flow database.Flow, fwc flowWorkerCtx) 
 	}
 
 	prompter := templates.NewDefaultPrompter() // TODO: change to flow prompter by userID from DB
-	executor, err := tools.NewFlowToolsExecutor(fwc.db, fwc.cfg, fwc.docker, functions, flow.ID)
+	executor, err := tools.NewFlowToolsExecutor(fwc.db, fwc.cfg, fwc.docker, functions, flow.ID, flowEngagementID(flow))
 	if err != nil {
 		return nil, wrapErrorEndSpan(ctx, flowSpan, "failed to create flow tools executor", err)
 	}

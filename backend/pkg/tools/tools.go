@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -9,6 +10,8 @@ import (
 	"pentagi/pkg/database"
 	"pentagi/pkg/docker"
 	"pentagi/pkg/graphiti"
+	"pentagi/pkg/ingestion/findings"
+	"pentagi/pkg/ingestion/scope"
 	"pentagi/pkg/providers/embeddings"
 	"pentagi/pkg/schema"
 
@@ -153,6 +156,14 @@ type flowToolsExecutor struct {
 
 	definitions map[string]llms.FunctionDefinition
 	handlers    map[string]ExecutorHandler
+
+	// engagementID is nil for legacy flows that have no associated
+	// engagement. When non-nil (and positive), per-flow executors will
+	// register the engagement-scoped findings tools AND wrap their
+	// handlers with the scope hard-gate.
+	engagementID  *int64
+	findingsTools *findings.Tools
+	scopeMatcher  *scope.Matcher
 }
 
 type ContextToolsExecutor interface {
@@ -309,6 +320,7 @@ func NewFlowToolsExecutor(
 	docker docker.DockerClient,
 	functions *Functions,
 	flowID int64,
+	engagementID *int64,
 ) (FlowToolsExecutor, error) {
 	allPatterns, err := patterns.LoadPatterns(patterns.PatternListTypeAll)
 	if err != nil {
@@ -323,7 +335,7 @@ func NewFlowToolsExecutor(
 		return nil, fmt.Errorf("failed to create replacer: %v", err)
 	}
 
-	return &flowToolsExecutor{
+	fte := &flowToolsExecutor{
 		db:          db,
 		docker:      docker,
 		functions:   functions,
@@ -332,7 +344,132 @@ func NewFlowToolsExecutor(
 		flowID:      flowID,
 		definitions: make(map[string]llms.FunctionDefinition),
 		handlers:    make(map[string]ExecutorHandler),
-	}, nil
+	}
+
+	// engagement-aware flows get the findings tools and the scope hard-gate.
+	// Legacy flows (engagement_id=NULL) skip both — agents see no
+	// engagement-scoped tools and every call passes through unchecked
+	// (preserving the pre-Phase-14 behavior).
+	if engagementID != nil && *engagementID > 0 {
+		fte.engagementID = engagementID
+
+		ft, err := findings.New(db, *engagementID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to construct findings tools: %w", err)
+		}
+		fte.findingsTools = ft
+
+		matcher, err := scope.LoadMatcher(context.Background(), db, *engagementID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load scope matcher: %w", err)
+		}
+		fte.scopeMatcher = matcher
+	}
+
+	return fte, nil
+}
+
+// hasEngagement reports whether this flow runs under an engagement (findings
+// tools + scope-gate behavior apply) or is a legacy flow.
+func (fte *flowToolsExecutor) hasEngagement() bool {
+	return fte.engagementID != nil && fte.findingsTools != nil
+}
+
+// appendFindingsTools appends the six engagement-scoped findings tools to the
+// given definition slice and handlers map. Callers must check hasEngagement()
+// first; calling this otherwise panics on a nil findingsTools receiver.
+func (fte *flowToolsExecutor) appendFindingsTools(
+	definitions []llms.FunctionDefinition,
+	handlers map[string]ExecutorHandler,
+) []llms.FunctionDefinition {
+	ft := fte.findingsTools
+	definitions = append(definitions,
+		registryDefinitions[ListFindingsToolName],
+		registryDefinitions[GetTopFindingsByCVSSToolName],
+		registryDefinitions[GetHostServicesToolName],
+		registryDefinitions[GetContainerCVEsToolName],
+		registryDefinitions[GetFindingByIDToolName],
+		registryDefinitions[MarkFindingVerifiedToolName],
+	)
+	handlers[ListFindingsToolName] = ft.ListFindings
+	handlers[GetTopFindingsByCVSSToolName] = ft.GetTopFindingsByCVSS
+	handlers[GetHostServicesToolName] = ft.GetHostServices
+	handlers[GetContainerCVEsToolName] = ft.GetContainerCVEs
+	handlers[GetFindingByIDToolName] = ft.GetFindingByID
+	handlers[MarkFindingVerifiedToolName] = ft.MarkFindingVerified
+	return definitions
+}
+
+// asTargetExtractor returns t as a scope.TargetExtractor if the underlying
+// concrete type implements it; otherwise returns nil (gate passes through).
+// This indirection is needed because NewBrowserTool / NewTerminalTool return
+// the generic Tool interface, not their concrete structs.
+func asTargetExtractor(t Tool) scope.TargetExtractor {
+	if te, ok := t.(scope.TargetExtractor); ok {
+		return te
+	}
+	return nil
+}
+
+// applyScopeGateToExecutor wraps every handler in ce with the scope hard-gate
+// if this flow has an engagement. Extractors are picked by tool name: tools
+// not in extractorByToolName pass through unchanged. The helper lets each
+// Get*Executor leave its existing handler-assembly code intact and opt-in
+// to gating with a single call at the end.
+func (fte *flowToolsExecutor) applyScopeGateToExecutor(
+	ce *customExecutor,
+	extractorByToolName map[string]scope.TargetExtractor,
+) {
+	if !fte.hasEngagement() {
+		return
+	}
+	ce.handlers = fte.wrapWithScopeGate(ce.handlers, extractorByToolName)
+}
+
+// appendFindingsToolsToExecutor is the ce-oriented variant of
+// appendFindingsTools for the executors that build a customExecutor first
+// then mutate ce.definitions/ce.handlers.
+func (fte *flowToolsExecutor) appendFindingsToolsToExecutor(ce *customExecutor) {
+	if !fte.hasEngagement() {
+		return
+	}
+	ce.definitions = fte.appendFindingsTools(ce.definitions, ce.handlers)
+}
+
+// wrapWithScopeGate returns a fresh handlers map where every handler is
+// wrapped with scope.WithGate. extractors is a per-tool TargetExtractor map
+// populated by each Get*Executor as tools are constructed; tools absent from
+// the map are passed through unchanged (no targetable args).
+//
+// Called only when hasEngagement() is true. audit persists every blocked call
+// to scope_violations, capturing this flow's ID and engagement_id.
+func (fte *flowToolsExecutor) wrapWithScopeGate(
+	handlers map[string]ExecutorHandler,
+	extractors map[string]scope.TargetExtractor,
+) map[string]ExecutorHandler {
+	engID := *fte.engagementID
+	audit := func(target, toolName string) {
+		// Best-effort audit: a failed insert must not prevent the gate
+		// response; the violation is already reflected in the tool result
+		// the LLM sees.
+		_ = fte.db.RecordScopeViolation(context.Background(), database.RecordScopeViolationParams{
+			FlowID:       sql.NullInt64{Int64: fte.flowID, Valid: true},
+			EngagementID: sql.NullInt64{Int64: engID, Valid: true},
+			ToolName:     toolName,
+			Target:       target,
+		})
+	}
+
+	wrapped := make(map[string]ExecutorHandler, len(handlers))
+	for name, h := range handlers {
+		// scope.ExecutorFn shares the pkg/tools.ExecutorHandler signature;
+		// a direct conversion is safe and keeps the gate wrapper package
+		// free of pkg/tools imports.
+		inner := scope.ExecutorFn(h)
+		gated := scope.WithGate(fte.scopeMatcher, extractors[name], inner, audit)
+		wrapped[name] = ExecutorHandler(gated)
+	}
+	return wrapped
 }
 
 func (fte *flowToolsExecutor) SetFlowID(flowID int64) {
@@ -538,6 +675,10 @@ func (fte *flowToolsExecutor) GetAssistantExecutor(cfg AssistantExecutorConfig) 
 		TerminalToolName: term.Handle,
 		FileToolName:     term.Handle,
 	}
+	extractors := map[string]scope.TargetExtractor{
+		TerminalToolName: asTargetExtractor(term),
+		FileToolName:     asTargetExtractor(term),
+	}
 
 	browser := NewBrowserTool(
 		fte.flowID, nil, nil,
@@ -549,6 +690,7 @@ func (fte *flowToolsExecutor) GetAssistantExecutor(cfg AssistantExecutorConfig) 
 	if browser.IsAvailable() {
 		definitions = append(definitions, registryDefinitions[BrowserToolName])
 		handlers[BrowserToolName] = browser.Handle
+		extractors[BrowserToolName] = asTargetExtractor(browser)
 	}
 
 	if cfg.UseAgents {
@@ -684,6 +826,12 @@ func (fte *flowToolsExecutor) GetAssistantExecutor(cfg AssistantExecutorConfig) 
 		}
 	}
 
+	// Engagement-aware: findings tools + scope gate wrapping every handler.
+	if fte.hasEngagement() {
+		definitions = fte.appendFindingsTools(definitions, handlers)
+		handlers = fte.wrapWithScopeGate(handlers, extractors)
+	}
+
 	ce := &customExecutor{
 		flowID:      fte.flowID,
 		mlp:         fte.mlp,
@@ -728,42 +876,58 @@ func (fte *flowToolsExecutor) GetPrimaryExecutor(cfg PrimaryExecutorConfig) (Con
 		return nil, fmt.Errorf("searcher handler is required")
 	}
 
-	ce := &customExecutor{
-		flowID:    fte.flowID,
-		taskID:    &cfg.TaskID,
-		subtaskID: &cfg.SubtaskID,
-		mlp:       fte.mlp,
-		vslp:      fte.vslp,
-		db:        fte.db,
-		store:     fte.store,
-		definitions: []llms.FunctionDefinition{
-			registryDefinitions[FinalyToolName],
-			registryDefinitions[AdviceToolName],
-			registryDefinitions[CoderToolName],
-			registryDefinitions[MaintenanceToolName],
-			registryDefinitions[MemoristToolName],
-			registryDefinitions[PentesterToolName],
-			registryDefinitions[SearchToolName],
-		},
-		handlers: map[string]ExecutorHandler{
-			FinalyToolName:      cfg.Barrier,
-			AdviceToolName:      cfg.Adviser,
-			CoderToolName:       cfg.Coder,
-			MaintenanceToolName: cfg.Installer,
-			MemoristToolName:    cfg.Memorist,
-			PentesterToolName:   cfg.Pentester,
-			SearchToolName:      cfg.Searcher,
-		},
-		barriers: map[string]struct{}{
-			FinalyToolName: {},
-		},
-		summarizer: cfg.Summarizer,
+	definitions := []llms.FunctionDefinition{
+		registryDefinitions[FinalyToolName],
+		registryDefinitions[AdviceToolName],
+		registryDefinitions[CoderToolName],
+		registryDefinitions[MaintenanceToolName],
+		registryDefinitions[MemoristToolName],
+		registryDefinitions[PentesterToolName],
+		registryDefinitions[SearchToolName],
+	}
+	handlers := map[string]ExecutorHandler{
+		FinalyToolName:      cfg.Barrier,
+		AdviceToolName:      cfg.Adviser,
+		CoderToolName:       cfg.Coder,
+		MaintenanceToolName: cfg.Installer,
+		MemoristToolName:    cfg.Memorist,
+		PentesterToolName:   cfg.Pentester,
+		SearchToolName:      cfg.Searcher,
+	}
+	barriers := map[string]struct{}{
+		FinalyToolName: {},
 	}
 
 	if fte.cfg.AskUser {
-		ce.definitions = append(ce.definitions, registryDefinitions[AskUserToolName])
-		ce.handlers[AskUserToolName] = cfg.Barrier
-		ce.barriers[AskUserToolName] = struct{}{}
+		definitions = append(definitions, registryDefinitions[AskUserToolName])
+		handlers[AskUserToolName] = cfg.Barrier
+		barriers[AskUserToolName] = struct{}{}
+	}
+
+	// engagement-aware: expose findings tools to the primary orchestrator
+	// so it can consult ingested scanner findings before delegating.
+	if fte.hasEngagement() {
+		definitions = fte.appendFindingsTools(definitions, handlers)
+		// primary executor has no targetable tools — the gate is still
+		// applied so RecordScopeViolation captures any future tool whose
+		// args reference a target. Currently every handler above passes
+		// through (extractors map is empty), which is the correct
+		// behaviour for agent-delegation tools like advice/coder/etc.
+		handlers = fte.wrapWithScopeGate(handlers, map[string]scope.TargetExtractor{})
+	}
+
+	ce := &customExecutor{
+		flowID:      fte.flowID,
+		taskID:      &cfg.TaskID,
+		subtaskID:   &cfg.SubtaskID,
+		mlp:         fte.mlp,
+		vslp:        fte.vslp,
+		db:          fte.db,
+		store:       fte.store,
+		definitions: definitions,
+		handlers:    handlers,
+		barriers:    barriers,
+		summarizer:  cfg.Summarizer,
 	}
 
 	return ce, nil
@@ -860,6 +1024,13 @@ func (fte *flowToolsExecutor) GetInstallerExecutor(cfg InstallerExecutorConfig) 
 		ce.handlers[SearchGuideToolName] = guide.Handle
 	}
 
+	fte.appendFindingsToolsToExecutor(ce)
+	fte.applyScopeGateToExecutor(ce, map[string]scope.TargetExtractor{
+		TerminalToolName: asTargetExtractor(term),
+		FileToolName:     asTargetExtractor(term),
+		BrowserToolName:  asTargetExtractor(browser),
+	})
+
 	return ce, nil
 }
 
@@ -952,6 +1123,10 @@ func (fte *flowToolsExecutor) GetCoderExecutor(cfg CoderExecutorConfig) (Context
 		ce.handlers[GraphitiSearchToolName] = graphitiSearch.Handle
 	}
 
+	fte.applyScopeGateToExecutor(ce, map[string]scope.TargetExtractor{
+		BrowserToolName: asTargetExtractor(browser),
+	})
+
 	return ce, nil
 }
 
@@ -995,38 +1170,33 @@ func (fte *flowToolsExecutor) GetPentesterExecutor(cfg PentesterExecutorConfig) 
 		fte.tlp,
 	)
 
-	ce := &customExecutor{
-		flowID:    fte.flowID,
-		taskID:    cfg.TaskID,
-		subtaskID: cfg.SubtaskID,
-		mlp:       fte.mlp,
-		vslp:      fte.vslp,
-		db:        fte.db,
-		store:     fte.store,
-		definitions: []llms.FunctionDefinition{
-			registryDefinitions[HackResultToolName],
-			registryDefinitions[AdviceToolName],
-			registryDefinitions[CoderToolName],
-			registryDefinitions[MaintenanceToolName],
-			registryDefinitions[MemoristToolName],
-			registryDefinitions[SearchToolName],
-			registryDefinitions[TerminalToolName],
-			registryDefinitions[FileToolName],
-		},
-		handlers: map[string]ExecutorHandler{
-			HackResultToolName:  cfg.HackResult,
-			AdviceToolName:      cfg.Adviser,
-			CoderToolName:       cfg.Coder,
-			MaintenanceToolName: cfg.Installer,
-			MemoristToolName:    cfg.Memorist,
-			SearchToolName:      cfg.Searcher,
-			TerminalToolName:    term.Handle,
-			FileToolName:        term.Handle,
-		},
-		barriers: map[string]struct{}{
-			HackResultToolName: {},
-		},
-		summarizer: cfg.Summarizer,
+	definitions := []llms.FunctionDefinition{
+		registryDefinitions[HackResultToolName],
+		registryDefinitions[AdviceToolName],
+		registryDefinitions[CoderToolName],
+		registryDefinitions[MaintenanceToolName],
+		registryDefinitions[MemoristToolName],
+		registryDefinitions[SearchToolName],
+		registryDefinitions[TerminalToolName],
+		registryDefinitions[FileToolName],
+	}
+	handlers := map[string]ExecutorHandler{
+		HackResultToolName:  cfg.HackResult,
+		AdviceToolName:      cfg.Adviser,
+		CoderToolName:       cfg.Coder,
+		MaintenanceToolName: cfg.Installer,
+		MemoristToolName:    cfg.Memorist,
+		SearchToolName:      cfg.Searcher,
+		TerminalToolName:    term.Handle,
+		FileToolName:        term.Handle,
+	}
+	// extractors accumulate TargetExtractor implementations so the scope
+	// gate can check tool args against the engagement's scope rules. Only
+	// tools whose args reference concrete external targets need entries;
+	// the rest pass through.
+	extractors := map[string]scope.TargetExtractor{
+		TerminalToolName: asTargetExtractor(term),
+		FileToolName:     asTargetExtractor(term),
 	}
 
 	browser := NewBrowserTool(
@@ -1039,8 +1209,9 @@ func (fte *flowToolsExecutor) GetPentesterExecutor(cfg PentesterExecutorConfig) 
 		fte.scp,
 	)
 	if browser.IsAvailable() {
-		ce.definitions = append(ce.definitions, registryDefinitions[BrowserToolName])
-		ce.handlers[BrowserToolName] = browser.Handle
+		definitions = append(definitions, registryDefinitions[BrowserToolName])
+		handlers[BrowserToolName] = browser.Handle
+		extractors[BrowserToolName] = asTargetExtractor(browser)
 	}
 
 	guide := NewGuideTool(
@@ -1052,10 +1223,10 @@ func (fte *flowToolsExecutor) GetPentesterExecutor(cfg PentesterExecutorConfig) 
 		fte.vslp,
 	)
 	if guide.IsAvailable() {
-		ce.definitions = append(ce.definitions, registryDefinitions[StoreGuideToolName])
-		ce.definitions = append(ce.definitions, registryDefinitions[SearchGuideToolName])
-		ce.handlers[StoreGuideToolName] = guide.Handle
-		ce.handlers[SearchGuideToolName] = guide.Handle
+		definitions = append(definitions, registryDefinitions[StoreGuideToolName])
+		definitions = append(definitions, registryDefinitions[SearchGuideToolName])
+		handlers[StoreGuideToolName] = guide.Handle
+		handlers[SearchGuideToolName] = guide.Handle
 	}
 
 	graphitiSearch := NewGraphitiSearchTool(
@@ -1065,8 +1236,8 @@ func (fte *flowToolsExecutor) GetPentesterExecutor(cfg PentesterExecutorConfig) 
 		fte.graphitiClient,
 	)
 	if graphitiSearch.IsAvailable() {
-		ce.definitions = append(ce.definitions, registryDefinitions[GraphitiSearchToolName])
-		ce.handlers[GraphitiSearchToolName] = graphitiSearch.Handle
+		definitions = append(definitions, registryDefinitions[GraphitiSearchToolName])
+		handlers[GraphitiSearchToolName] = graphitiSearch.Handle
 	}
 
 	sploitus := NewSploitusTool(
@@ -1077,8 +1248,30 @@ func (fte *flowToolsExecutor) GetPentesterExecutor(cfg PentesterExecutorConfig) 
 		fte.slp,
 	)
 	if sploitus.IsAvailable() {
-		ce.definitions = append(ce.definitions, registryDefinitions[SploitusToolName])
-		ce.handlers[SploitusToolName] = sploitus.Handle
+		definitions = append(definitions, registryDefinitions[SploitusToolName])
+		handlers[SploitusToolName] = sploitus.Handle
+	}
+
+	// Engagement-aware: findings tools + scope gate wrapping every handler.
+	if fte.hasEngagement() {
+		definitions = fte.appendFindingsTools(definitions, handlers)
+		handlers = fte.wrapWithScopeGate(handlers, extractors)
+	}
+
+	ce := &customExecutor{
+		flowID:      fte.flowID,
+		taskID:      cfg.TaskID,
+		subtaskID:   cfg.SubtaskID,
+		mlp:         fte.mlp,
+		vslp:        fte.vslp,
+		db:          fte.db,
+		store:       fte.store,
+		definitions: definitions,
+		handlers:    handlers,
+		barriers: map[string]struct{}{
+			HackResultToolName: {},
+		},
+		summarizer: cfg.Summarizer,
 	}
 
 	return ce, nil
@@ -1231,6 +1424,10 @@ func (fte *flowToolsExecutor) GetSearcherExecutor(cfg SearcherExecutorConfig) (C
 		ce.handlers[StoreAnswerToolName] = search.Handle
 	}
 
+	fte.applyScopeGateToExecutor(ce, map[string]scope.TargetExtractor{
+		BrowserToolName: asTargetExtractor(browser),
+	})
+
 	return ce, nil
 }
 
@@ -1296,6 +1493,12 @@ func (fte *flowToolsExecutor) GetGeneratorExecutor(cfg GeneratorExecutorConfig) 
 		ce.handlers[BrowserToolName] = browser.Handle
 	}
 
+	fte.applyScopeGateToExecutor(ce, map[string]scope.TargetExtractor{
+		TerminalToolName: asTargetExtractor(term),
+		FileToolName:     asTargetExtractor(term),
+		BrowserToolName:  asTargetExtractor(browser),
+	})
+
 	return ce, nil
 }
 
@@ -1360,6 +1563,12 @@ func (fte *flowToolsExecutor) GetRefinerExecutor(cfg RefinerExecutorConfig) (Con
 		ce.definitions = append(ce.definitions, registryDefinitions[BrowserToolName])
 		ce.handlers[BrowserToolName] = browser.Handle
 	}
+
+	fte.applyScopeGateToExecutor(ce, map[string]scope.TargetExtractor{
+		TerminalToolName: asTargetExtractor(term),
+		FileToolName:     asTargetExtractor(term),
+		BrowserToolName:  asTargetExtractor(browser),
+	})
 
 	return ce, nil
 }
@@ -1428,6 +1637,11 @@ func (fte *flowToolsExecutor) GetMemoristExecutor(cfg MemoristExecutorConfig) (C
 		ce.definitions = append(ce.definitions, registryDefinitions[GraphitiSearchToolName])
 		ce.handlers[GraphitiSearchToolName] = graphitiSearch.Handle
 	}
+
+	fte.applyScopeGateToExecutor(ce, map[string]scope.TargetExtractor{
+		TerminalToolName: asTargetExtractor(term),
+		FileToolName:     asTargetExtractor(term),
+	})
 
 	return ce, nil
 }
@@ -1510,6 +1724,12 @@ func (fte *flowToolsExecutor) GetEnricherExecutor(cfg EnricherExecutorConfig) (C
 		ce.definitions = append(ce.definitions, registryDefinitions[BrowserToolName])
 		ce.handlers[BrowserToolName] = browser.Handle
 	}
+
+	fte.applyScopeGateToExecutor(ce, map[string]scope.TargetExtractor{
+		TerminalToolName: asTargetExtractor(term),
+		FileToolName:     asTargetExtractor(term),
+		BrowserToolName:  asTargetExtractor(browser),
+	})
 
 	return ce, nil
 }

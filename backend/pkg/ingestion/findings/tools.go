@@ -22,8 +22,55 @@ import (
 	"fmt"
 
 	"pentagi/pkg/database"
-	"pentagi/pkg/tools"
 )
+
+// ---------------------------------------------------------------------
+// Agent-facing arg structs.
+//
+// The JSON schemas for these structs are reflected by pkg/tools/registry.go
+// (which imports this package — not the other way around, to avoid an
+// import cycle). Keep field names, tags, and jsonschema annotations in sync
+// with tools/args.go's pre-Phase-14 definitions; changing them here affects
+// what the LLM sees.
+// ---------------------------------------------------------------------
+
+// ListFindingsAction controls list_findings.
+type ListFindingsAction struct {
+	Severity           string `json:"severity,omitempty" jsonschema:"enum=info,enum=low,enum=medium,enum=high,enum=critical" jsonschema_description:"Filter by severity level"`
+	CVE                string `json:"cve,omitempty" jsonschema_description:"Exact CVE identifier to filter on, e.g. CVE-2024-1234"`
+	TargetKind         string `json:"target_kind,omitempty" jsonschema:"enum=host,enum=web_endpoint,enum=container" jsonschema_description:"Filter by target kind"`
+	VerificationStatus string `json:"verification_status,omitempty" jsonschema:"enum=unverified,enum=verifying,enum=confirmed,enum=false_positive,enum=not_exploitable" jsonschema_description:"Filter by verification status"`
+	Limit              int32  `json:"limit,omitempty" jsonschema:"type=integer" jsonschema_description:"Maximum rows to return (default 50, capped at 500)"`
+	Offset             int32  `json:"offset,omitempty" jsonschema:"type=integer" jsonschema_description:"Pagination offset (default 0)"`
+}
+
+// TopFindingsByCVSSAction controls get_top_findings_by_cvss.
+type TopFindingsByCVSSAction struct {
+	Limit int32 `json:"limit,omitempty" jsonschema:"type=integer" jsonschema_description:"Top-N findings to return, ordered by CVSS score desc (default 10, capped at 100)"`
+}
+
+// FindingsByKindAction is the (empty) args struct shared by
+// get_host_services and get_container_cves. The engagement is captured at
+// construction time and the target kind is bound into each tool's identity,
+// so no runtime arguments are needed.
+type FindingsByKindAction struct{}
+
+// GetFindingByIDAction controls get_finding_by_id.
+type GetFindingByIDAction struct {
+	ID int64 `json:"id" jsonschema:"required,type=integer" jsonschema_description:"Database id of the finding to fetch. Must belong to the current engagement."`
+}
+
+// MarkFindingVerifiedAction controls mark_finding_verified.
+type MarkFindingVerifiedAction struct {
+	ID                 int64  `json:"id" jsonschema:"required,type=integer" jsonschema_description:"Database id of the finding to update"`
+	VerificationStatus string `json:"verification_status" jsonschema:"required,enum=confirmed,enum=false_positive,enum=not_exploitable" jsonschema_description:"Terminal classification the agent is assigning. 'confirmed' means the vulnerability was reproduced; 'false_positive' means the scanner was wrong; 'not_exploitable' means real but not reachable / not useful."`
+	Notes              string `json:"notes,omitempty" jsonschema_description:"Free-text reasoning for the classification. Include evidence the agent gathered (commands run, payloads tried, responses seen)."`
+}
+
+// GetRetestDiffAction controls get_retest_diff.
+type GetRetestDiffAction struct {
+	FlowID int64 `json:"flow_id" jsonschema:"required,type=integer" jsonschema_description:"Flow id whose retest diff should be returned. Typically the current flow."`
+}
 
 // Repo is the narrow slice of database.Querier this package needs.
 // Using an interface rather than *database.Queries keeps tests light
@@ -68,10 +115,10 @@ const (
 
 // ListFindings implements list_findings: paginated, filterable listing
 // of findings scoped to this Tools' engagement. The argument schema is
-// tools.ListFindingsAction (defined alongside the registry reflector so
+// ListFindingsAction (defined alongside the registry reflector so
 // the LLM-facing schema never diverges from the handler's parser).
 func (t *Tools) ListFindings(ctx context.Context, _ string, raw json.RawMessage) (string, error) {
-	var args tools.ListFindingsAction
+	var args ListFindingsAction
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return "", fmt.Errorf("list_findings: invalid arguments: %w", err)
@@ -108,7 +155,7 @@ func clampTopLimit(in int32) int32 {
 	return in
 }
 
-func (t *Tools) buildListParams(a tools.ListFindingsAction) database.ListFindingsParams {
+func (t *Tools) buildListParams(a ListFindingsAction) database.ListFindingsParams {
 	p := database.ListFindingsParams{
 		EngagementID: t.engagementID,
 		Limit:        int64(a.Limit),
@@ -143,7 +190,7 @@ func (t *Tools) buildListParams(a tools.ListFindingsAction) database.ListFinding
 // GetTopFindingsByCVSS returns the highest-CVSS findings for the
 // engagement. Use it at engagement kickoff to prioritise attack surface.
 func (t *Tools) GetTopFindingsByCVSS(ctx context.Context, _ string, raw json.RawMessage) (string, error) {
-	var args tools.TopFindingsByCVSSAction
+	var args TopFindingsByCVSSAction
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return "", fmt.Errorf("get_top_findings_by_cvss: invalid arguments: %w", err)
@@ -200,7 +247,7 @@ func (t *Tools) findingsByKind(ctx context.Context, kind database.TargetKind, to
 // a finding from another engagement is rejected with an error rather
 // than leaked.
 func (t *Tools) GetFindingByID(ctx context.Context, _ string, raw json.RawMessage) (string, error) {
-	var args tools.GetFindingByIDAction
+	var args GetFindingByIDAction
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return "", fmt.Errorf("get_finding_by_id: invalid arguments: %w", err)
 	}
@@ -239,7 +286,7 @@ var allowedAgentVerificationStatuses = map[string]struct{}{
 // Enforces engagement isolation via a GetFinding pre-read (parallel to
 // GetFindingByID).
 func (t *Tools) MarkFindingVerified(ctx context.Context, _ string, raw json.RawMessage) (string, error) {
-	var args tools.MarkFindingVerifiedAction
+	var args MarkFindingVerifiedAction
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return "", fmt.Errorf("mark_finding_verified: invalid arguments: %w", err)
 	}

@@ -66,7 +66,7 @@ func NewTester(
 	functions := &tools.Functions{}
 
 	// Initialize tools flowExecutor
-	flowExecutor, err := tools.NewFlowToolsExecutor(db, cfg, dockerClient, functions, flowID)
+	flowExecutor, err := tools.NewFlowToolsExecutor(db, cfg, dockerClient, functions, flowID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create flow tools executor: %w", err)
 	}

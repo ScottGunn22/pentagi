@@ -3,6 +3,7 @@ package tools
 import (
 	"maps"
 	"pentagi/pkg/database"
+	"pentagi/pkg/ingestion/findings"
 
 	"github.com/invopop/jsonschema"
 	"github.com/vxcontrol/langchaingo/llms"
@@ -47,6 +48,7 @@ const (
 	GetContainerCVEsToolName     = "get_container_cves"
 	GetFindingByIDToolName       = "get_finding_by_id"
 	MarkFindingVerifiedToolName  = "mark_finding_verified"
+	GetRetestDiffToolName        = "get_retest_diff"
 	ReportResultToolName      = "report_result"
 	SubtaskListToolName       = "subtask_list"
 	SubtaskPatchToolName      = "subtask_patch"
@@ -138,6 +140,7 @@ var toolsTypeMapping = map[string]ToolType{
 	GetContainerCVEsToolName:     SearchVectorDbToolType,
 	GetFindingByIDToolName:       SearchVectorDbToolType,
 	MarkFindingVerifiedToolName:  StoreAgentResultToolType,
+	GetRetestDiffToolName:        SearchVectorDbToolType,
 	ReportResultToolName:      StoreAgentResultToolType,
 	SubtaskListToolName:       StoreAgentResultToolType,
 	SubtaskPatchToolName:      StoreAgentResultToolType,
@@ -342,34 +345,34 @@ var registryDefinitions = map[string]llms.FunctionDefinition{
 			"Findings come from uploaded scan reports (nmap, burp, twistlock, qualys) that have already been parsed and " +
 			"de-duplicated. Use this before re-running recon — agents should consult existing findings first, then only " +
 			"tool-verify the ones that matter. Results are ordered by severity desc, then CVSS desc.",
-		Parameters: reflector.Reflect(&ListFindingsAction{}),
+		Parameters: reflector.Reflect(&findings.ListFindingsAction{}),
 	},
 	GetTopFindingsByCVSSToolName: {
 		Name: GetTopFindingsByCVSSToolName,
 		Description: "Get the highest-CVSS findings for the current engagement, ordered by CVSS score desc. Use this at " +
 			"engagement kickoff to prioritise attack surface: the top N findings are the most likely entry points.",
-		Parameters: reflector.Reflect(&TopFindingsByCVSSAction{}),
+		Parameters: reflector.Reflect(&findings.TopFindingsByCVSSAction{}),
 	},
 	GetHostServicesToolName: {
 		Name: GetHostServicesToolName,
 		Description: "Return all findings whose target is a host (target_kind=host) for the current engagement. This is " +
 			"typically open services from nmap-style scans: ports, banners, detected software versions. Use this to build " +
 			"a mental model of the network attack surface without re-running nmap.",
-		Parameters: reflector.Reflect(&FindingsByKindAction{}),
+		Parameters: reflector.Reflect(&findings.FindingsByKindAction{}),
 	},
 	GetContainerCVEsToolName: {
 		Name: GetContainerCVEsToolName,
 		Description: "Return all findings whose target is a container (target_kind=container) for the current engagement. " +
 			"These are typically CVEs from image scanners like Twistlock. Use this to map the container image " +
 			"vulnerability surface before attempting container-escape or known-CVE exploitation.",
-		Parameters: reflector.Reflect(&FindingsByKindAction{}),
+		Parameters: reflector.Reflect(&findings.FindingsByKindAction{}),
 	},
 	GetFindingByIDToolName: {
 		Name: GetFindingByIDToolName,
 		Description: "Fetch a single finding by database id. The finding must belong to the current engagement; " +
 			"cross-engagement lookups are rejected. Typically used after list_findings to pull full evidence/detail " +
 			"on a specific row the agent wants to investigate.",
-		Parameters: reflector.Reflect(&GetFindingByIDAction{}),
+		Parameters: reflector.Reflect(&findings.GetFindingByIDAction{}),
 	},
 	MarkFindingVerifiedToolName: {
 		Name: MarkFindingVerifiedToolName,
@@ -377,7 +380,14 @@ var registryDefinitions = map[string]llms.FunctionDefinition{
 			"to reproduce the finding with a real exploit/request. Status is one of: 'confirmed' (successfully reproduced), " +
 			"'false_positive' (the scanner was wrong), or 'not_exploitable' (real but not reachable). Include the evidence " +
 			"(commands run, responses seen) in the notes field so future agents can trust the conclusion.",
-		Parameters: reflector.Reflect(&MarkFindingVerifiedAction{}),
+		Parameters: reflector.Reflect(&findings.MarkFindingVerifiedAction{}),
+	},
+	GetRetestDiffToolName: {
+		Name: GetRetestDiffToolName,
+		Description: "Return the retest diff for the given flow. Each row tells the agent whether a baseline " +
+			"finding is fixed (absent now), persistent (still present), or new (added since baseline). Use this " +
+			"at the start of a retest_diff flow to understand what changed since the prior engagement pass.",
+		Parameters: reflector.Reflect(&findings.GetRetestDiffAction{}),
 	},
 	MemoristToolName: {
 		Name:        MemoristToolName,
