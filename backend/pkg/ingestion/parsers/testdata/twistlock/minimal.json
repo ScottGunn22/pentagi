@@ -1,0 +1,35 @@
+{
+  "results": [
+    {
+      "id": "sha256:abc123def456",
+      "name": "registry.acme.internal/app",
+      "tag": "v1.2.3",
+      "distro": "Debian 12",
+      "vulnerabilities": [
+        {
+          "id": "CVE-2024-12345",
+          "packageName": "openssl",
+          "packageVersion": "3.0.11",
+          "severity": "high",
+          "cvss": 7.5,
+          "description": "OpenSSL has a flaw..."
+        },
+        {
+          "id": "CVE-2024-67890",
+          "packageName": "libz",
+          "packageVersion": "1.2.13",
+          "severity": "critical",
+          "cvss": 9.8,
+          "description": "libz unbounded write..."
+        }
+      ],
+      "complianceIssues": [
+        {
+          "id": "CIS-001",
+          "severity": "medium",
+          "description": "Image runs as root user"
+        }
+      ]
+    }
+  ]
+}
