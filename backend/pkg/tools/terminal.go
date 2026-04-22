@@ -14,6 +14,7 @@ import (
 
 	"pentagi/pkg/database"
 	"pentagi/pkg/docker"
+	"pentagi/pkg/ingestion/scope"
 	obs "pentagi/pkg/observability"
 	"pentagi/pkg/observability/langfuse"
 
@@ -423,6 +424,12 @@ func PrimaryTerminalName(flowID int64) string {
 func (t *terminal) IsAvailable() bool {
 	return t.dockerClient != nil
 }
+
+// Targets implements scope.TargetExtractor for the terminal tool. The shell
+// arg is freeform — there is no reliable way to extract concrete targets
+// from arbitrary command lines. v2 will add post-hoc stdout/IP-extraction
+// redaction; for v1 the gate is bypassed for this tool.
+func (t *terminal) Targets(_ json.RawMessage) []scope.Target { return nil }
 
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {

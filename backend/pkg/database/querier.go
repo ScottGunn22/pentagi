@@ -227,7 +227,9 @@ type Querier interface {
 	ListFindings(ctx context.Context, arg ListFindingsParams) ([]Finding, error)
 	ListScanReports(ctx context.Context, arg ListScanReportsParams) ([]ScanReport, error)
 	ListScopeRules(ctx context.Context, engagementID int64) ([]EngagementScopeRule, error)
+	ListScopeViolations(ctx context.Context, arg ListScopeViolationsParams) ([]ScopeViolation, error)
 	MarkFindingGraphSeeded(ctx context.Context, id int64) error
+	RecordScopeViolation(ctx context.Context, arg RecordScopeViolationParams) error
 	SoftDeleteEngagement(ctx context.Context, id int64) error
 	TopFindingsByCVSS(ctx context.Context, arg TopFindingsByCVSSParams) ([]Finding, error)
 	UpdateAPIToken(ctx context.Context, arg UpdateAPITokenParams) (ApiToken, error)
