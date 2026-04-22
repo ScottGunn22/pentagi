@@ -357,7 +357,7 @@ func (s *FlowService) CreateFlow(c *gin.Context) {
 	}
 	prvtype := prv.Type()
 
-	fw, err := s.fc.CreateFlow(c, int64(uid), createFlow.Input, prvname, prvtype, createFlow.Functions)
+	fw, err := s.fc.CreateFlow(c, int64(uid), createFlow.Input, prvname, prvtype, createFlow.Functions, controller.EngagementFlowOptions{})
 	if err != nil {
 		logger.FromContext(c).WithError(err).Errorf("error creating flow")
 		response.Error(c, response.ErrInternal, err)

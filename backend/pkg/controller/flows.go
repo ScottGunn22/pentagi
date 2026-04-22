@@ -23,6 +23,16 @@ var (
 	ErrFlowAlreadyStopped = fmt.Errorf("flow already stopped")
 )
 
+// EngagementFlowOptions bundles the optional engagement-aware parameters for
+// CreateFlow. Zero value means "legacy flow, no engagement" — equivalent to
+// the pre-Phase-14 behavior.
+type EngagementFlowOptions struct {
+	EngagementID   *int64
+	FlowType       database.FlowType
+	BaselineFlowID *int64
+	RetestTargets  []int64
+}
+
 type FlowController interface {
 	CreateFlow(
 		ctx context.Context,
@@ -31,6 +41,7 @@ type FlowController interface {
 		prvname provider.ProviderName,
 		prvtype provider.ProviderType,
 		functions *tools.Functions,
+		eng EngagementFlowOptions,
 	) (FlowWorker, error)
 	CreateAssistant(
 		ctx context.Context,
@@ -137,16 +148,21 @@ func (fc *flowController) CreateFlow(
 	prvname provider.ProviderName,
 	prvtype provider.ProviderType,
 	functions *tools.Functions,
+	eng EngagementFlowOptions,
 ) (FlowWorker, error) {
 	fc.mx.Lock()
 	defer fc.mx.Unlock()
 
 	fw, err := NewFlowWorker(ctx, newFlowWorkerCtx{
-		userID:    userID,
-		input:     input,
-		prvname:   prvname,
-		prvtype:   prvtype,
-		functions: functions,
+		userID:                userID,
+		input:                 input,
+		prvname:               prvname,
+		prvtype:               prvtype,
+		functions:             functions,
+		engagementID:          eng.EngagementID,
+		flowType:              eng.FlowType,
+		baselineFlowID:        eng.BaselineFlowID,
+		retestTargetFindingID: eng.RetestTargets,
 		flowWorkerCtx: flowWorkerCtx{
 			db:     fc.db,
 			cfg:    fc.cfg,

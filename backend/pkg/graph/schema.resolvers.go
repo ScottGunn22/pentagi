@@ -63,7 +63,7 @@ func (r *mutationResolver) CreateFlow(ctx context.Context, modelProvider string,
 	}
 	prvtype := prv.Type()
 
-	fw, err := r.Controller.CreateFlow(ctx, uid, input, prvname, prvtype, nil)
+	fw, err := r.Controller.CreateFlow(ctx, uid, input, prvname, prvtype, nil, controller.EngagementFlowOptions{})
 	if err != nil {
 		return nil, err
 	}

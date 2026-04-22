@@ -55,7 +55,13 @@ type Querier interface {
 	DeleteUserPrompt(ctx context.Context, arg DeleteUserPromptParams) error
 	DeleteUserProvider(ctx context.Context, arg DeleteUserProviderParams) (Provider, error)
 	EngagementFindingStats(ctx context.Context, engagementID int64) (EngagementFindingStatsRow, error)
+	// All findings for the engagement. Used by the retest diff to compute the
+	// current set.
+	FindingsByEngagement(ctx context.Context, engagementID int64) ([]Finding, error)
 	FindingsByTargetKind(ctx context.Context, arg FindingsByTargetKindParams) ([]Finding, error)
+	// Findings in the engagement whose first_seen_at is at or before the given
+	// cutoff. Used by the retest diff to compute the baseline set.
+	FindingsFirstSeenBefore(ctx context.Context, arg FindingsFirstSeenBeforeParams) ([]Finding, error)
 	FindingsPendingGraphSync(ctx context.Context, limit int64) ([]Finding, error)
 	GetAPIToken(ctx context.Context, id int64) (ApiToken, error)
 	GetAPITokenByTokenID(ctx context.Context, tokenID string) (ApiToken, error)
@@ -223,8 +229,21 @@ type Querier interface {
 	GetUserTotalToolcallsStats(ctx context.Context, userID int64) (GetUserTotalToolcallsStatsRow, error)
 	GetUserTotalUsageStats(ctx context.Context, userID int64) (GetUserTotalUsageStatsRow, error)
 	GetUsers(ctx context.Context) ([]GetUsersRow, error)
+	InsertFlowRetestDiff(ctx context.Context, arg InsertFlowRetestDiffParams) error
+	// Flow retest queries.
+	//
+	// Two tables feed the retest lifecycle:
+	//   flow_retest_targets — explicit list of finding IDs for
+	//     targeted_reverify flows (the agent should only examine these).
+	//   flow_retest_diff — computed diff rows for retest_diff flows
+	//     (fixed / persistent / new / regressed buckets).
+	//
+	// All queries are flow-scoped; the caller provides the flow ID.
+	InsertFlowRetestTarget(ctx context.Context, arg InsertFlowRetestTargetParams) error
 	ListEngagements(ctx context.Context, arg ListEngagementsParams) ([]Engagement, error)
 	ListFindings(ctx context.Context, arg ListFindingsParams) ([]Finding, error)
+	ListFlowRetestDiff(ctx context.Context, flowID int64) ([]FlowRetestDiff, error)
+	ListFlowRetestTargets(ctx context.Context, flowID int64) ([]int64, error)
 	ListScanReports(ctx context.Context, arg ListScanReportsParams) ([]ScanReport, error)
 	ListScopeRules(ctx context.Context, engagementID int64) ([]EngagementScopeRule, error)
 	ListScopeViolations(ctx context.Context, arg ListScopeViolationsParams) ([]ScopeViolation, error)
@@ -249,6 +268,10 @@ type Querier interface {
 	UpdateEngagement(ctx context.Context, arg UpdateEngagementParams) (Engagement, error)
 	UpdateFindingVerification(ctx context.Context, arg UpdateFindingVerificationParams) (Finding, error)
 	UpdateFlow(ctx context.Context, arg UpdateFlowParams) (Flow, error)
+	// Populate engagement_id, flow_type, baseline_flow_id after the initial
+	// CreateFlow insert. CreateFlow has a fixed parameter list (title/model/…)
+	// that predates Phase 1; this :exec runs as a follow-up.
+	UpdateFlowEngagement(ctx context.Context, arg UpdateFlowEngagementParams) error
 	UpdateFlowLanguage(ctx context.Context, arg UpdateFlowLanguageParams) (Flow, error)
 	UpdateFlowProvider(ctx context.Context, arg UpdateFlowProviderParams) (Flow, error)
 	UpdateFlowStatus(ctx context.Context, arg UpdateFlowStatusParams) (Flow, error)
