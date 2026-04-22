@@ -15,6 +15,12 @@ FORCE_REBUILD="${FORCE_REBUILD:-0}"
 WITH_GRAPHITI="${WITH_GRAPHITI:-1}"   # Neo4j + Graphiti enabled by default
 WITH_OBS="${WITH_OBS:-0}"             # Grafana/Loki/Jaeger stack (heavy) — opt in
 
+# The upstream compose file pins pentagi to vxcontrol/pentagi:latest via an
+# env var. Override it so we run the feature-branch code from this worktree,
+# not the upstream image (which lacks the scanner-ingestion routes).
+PENTAGI_IMAGE_NAME="${PENTAGI_IMAGE:-local/pentagi:scanner-ingestion}"
+export PENTAGI_IMAGE="${PENTAGI_IMAGE_NAME}"
+
 say()  { printf '\033[1;34m[dev-up]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[dev-up]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[dev-up]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -64,14 +70,21 @@ say "compose files: ${COMPOSE_FILES[*]}"
 
 # --- Build / up --------------------------------------------------------------
 
-BUILD_FLAGS=()
-if [[ "${FORCE_REBUILD}" == "1" ]]; then
-    say "FORCE_REBUILD=1 → rebuilding pentagi image"
-    BUILD_FLAGS=(--build)
+# Make sure the feature-branch image exists. Build it if missing or if
+# FORCE_REBUILD=1 was passed.
+IMAGE_EXISTS=0
+if docker image inspect "${PENTAGI_IMAGE_NAME}" >/dev/null 2>&1; then
+    IMAGE_EXISTS=1
+fi
+if [[ "${FORCE_REBUILD}" == "1" || "${IMAGE_EXISTS}" == "0" ]]; then
+    say "building ${PENTAGI_IMAGE_NAME} from the current worktree (several minutes first time)"
+    docker build -t "${PENTAGI_IMAGE_NAME}" .
+else
+    say "using existing image ${PENTAGI_IMAGE_NAME} (set FORCE_REBUILD=1 to rebuild)"
 fi
 
 say "starting stack (detached)"
-docker compose "${COMPOSE_FILES[@]}" up -d "${BUILD_FLAGS[@]}"
+docker compose "${COMPOSE_FILES[@]}" up -d
 
 # --- Healthcheck polling -----------------------------------------------------
 
