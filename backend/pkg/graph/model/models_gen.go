@@ -142,6 +142,12 @@ type CreateAPITokenInput struct {
 	TTL  int     `json:"ttl"`
 }
 
+type CreateEngagementInput struct {
+	Name        string  `json:"name"`
+	Client      string  `json:"client"`
+	Description *string `json:"description,omitempty"`
+}
+
 type CreateFlowTemplateInput struct {
 	Title string `json:"title"`
 	Text  string `json:"text"`
@@ -184,6 +190,49 @@ type DefaultProvidersConfig struct {
 	Glm       *ProviderConfig `json:"glm,omitempty"`
 	Kimi      *ProviderConfig `json:"kimi,omitempty"`
 	Qwen      *ProviderConfig `json:"qwen,omitempty"`
+}
+
+// An Engagement groups scanner data, findings, and pentest flows under one SOW.
+type Engagement struct {
+	ID          int64            `json:"id"`
+	Name        string           `json:"name"`
+	Client      string           `json:"client"`
+	Description *string          `json:"description,omitempty"`
+	Status      EngagementStatus `json:"status"`
+	ScopeRules  []*ScopeRule     `json:"scopeRules"`
+	ScanReports []*ScanReport    `json:"scanReports"`
+	// Recent findings (severity-ranked then by CVSS); use the REST API for paged access.
+	Findings     []*Finding    `json:"findings"`
+	FindingStats *FindingStats `json:"findingStats"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt"`
+}
+
+type Finding struct {
+	ID                 int64              `json:"id"`
+	Title              string             `json:"title"`
+	Cve                *string            `json:"cve,omitempty"`
+	CvssScore          *float64           `json:"cvssScore,omitempty"`
+	Severity           SeverityLevel      `json:"severity"`
+	Confidence         FindingConfidence  `json:"confidence"`
+	Target             *Target            `json:"target"`
+	InScope            bool               `json:"inScope"`
+	VerificationStatus VerificationStatus `json:"verificationStatus"`
+	// Source-trust chain — the same logical finding can be evidenced by N reports.
+	Sources     []*ScanReport `json:"sources"`
+	Evidence    string        `json:"evidence"`
+	FirstSeenAt time.Time     `json:"firstSeenAt"`
+	LastSeenAt  time.Time     `json:"lastSeenAt"`
+}
+
+type FindingStats struct {
+	Critical   int `json:"critical"`
+	High       int `json:"high"`
+	Medium     int `json:"medium"`
+	Low        int `json:"low"`
+	Info       int `json:"info"`
+	OutOfScope int `json:"outOfScope"`
+	Confirmed  int `json:"confirmed"`
 }
 
 type Flow struct {
@@ -366,6 +415,32 @@ type ReasoningConfig struct {
 	MaxTokens *int             `json:"maxTokens,omitempty"`
 }
 
+type ScanReport struct {
+	ID               int64          `json:"id"`
+	SourceType       ScanSourceType `json:"sourceType"`
+	OriginalFilename string         `json:"originalFilename"`
+	ScanDate         *time.Time     `json:"scanDate,omitempty"`
+	IngestedAt       time.Time      `json:"ingestedAt"`
+	ParseStatus      ParseStatus    `json:"parseStatus"`
+	ParseError       *string        `json:"parseError,omitempty"`
+	FindingCount     int            `json:"findingCount"`
+}
+
+type ScopeRule struct {
+	ID        int64          `json:"id"`
+	RuleType  ScopeRuleType  `json:"ruleType"`
+	Value     string         `json:"value"`
+	Direction ScopeDirection `json:"direction"`
+	Note      *string        `json:"note,omitempty"`
+}
+
+type ScopeRuleInput struct {
+	RuleType  ScopeRuleType   `json:"ruleType"`
+	Value     string          `json:"value"`
+	Direction *ScopeDirection `json:"direction,omitempty"`
+	Note      *string         `json:"note,omitempty"`
+}
+
 type Screenshot struct {
 	ID        int64     `json:"id"`
 	FlowID    int64     `json:"flowId"`
@@ -415,6 +490,12 @@ type SubtaskExecutionStats struct {
 	SubtaskTitle         string  `json:"subtaskTitle"`
 	TotalDurationSeconds float64 `json:"totalDurationSeconds"`
 	TotalToolcallsCount  int     `json:"totalToolcallsCount"`
+}
+
+// Discriminator + opaque target reference (e.g. ip:10.1.2.3:443/tcp).
+type Target struct {
+	Kind TargetKind `json:"kind"`
+	Ref  string     `json:"ref"`
 }
 
 type Task struct {
@@ -531,6 +612,11 @@ type VectorStoreLog struct {
 	TaskID    *int64            `json:"taskId,omitempty"`
 	SubtaskID *int64            `json:"subtaskId,omitempty"`
 	CreatedAt time.Time         `json:"createdAt"`
+}
+
+type VerifyFindingInput struct {
+	VerificationStatus VerificationStatus `json:"verificationStatus"`
+	Notes              *string            `json:"notes,omitempty"`
 }
 
 type AgentConfigType string
@@ -663,6 +749,186 @@ func (e AgentType) MarshalGQL(w io.Writer) {
 	fmt.Fprint(w, strconv.Quote(e.String()))
 }
 
+// Diff state for a finding within a retest_diff flow.
+type DiffState string
+
+const (
+	DiffStateFixed      DiffState = "FIXED"
+	DiffStatePersistent DiffState = "PERSISTENT"
+	DiffStateNew        DiffState = "NEW"
+	DiffStateRegressed  DiffState = "REGRESSED"
+)
+
+var AllDiffState = []DiffState{
+	DiffStateFixed,
+	DiffStatePersistent,
+	DiffStateNew,
+	DiffStateRegressed,
+}
+
+func (e DiffState) IsValid() bool {
+	switch e {
+	case DiffStateFixed, DiffStatePersistent, DiffStateNew, DiffStateRegressed:
+		return true
+	}
+	return false
+}
+
+func (e DiffState) String() string {
+	return string(e)
+}
+
+func (e *DiffState) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = DiffState(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid DiffState", str)
+	}
+	return nil
+}
+
+func (e DiffState) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Engagement status.
+type EngagementStatus string
+
+const (
+	EngagementStatusActive    EngagementStatus = "ACTIVE"
+	EngagementStatusOnHold    EngagementStatus = "ON_HOLD"
+	EngagementStatusCompleted EngagementStatus = "COMPLETED"
+	EngagementStatusArchived  EngagementStatus = "ARCHIVED"
+)
+
+var AllEngagementStatus = []EngagementStatus{
+	EngagementStatusActive,
+	EngagementStatusOnHold,
+	EngagementStatusCompleted,
+	EngagementStatusArchived,
+}
+
+func (e EngagementStatus) IsValid() bool {
+	switch e {
+	case EngagementStatusActive, EngagementStatusOnHold, EngagementStatusCompleted, EngagementStatusArchived:
+		return true
+	}
+	return false
+}
+
+func (e EngagementStatus) String() string {
+	return string(e)
+}
+
+func (e *EngagementStatus) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = EngagementStatus(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid EngagementStatus", str)
+	}
+	return nil
+}
+
+func (e EngagementStatus) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Scanner-reported confidence.
+type FindingConfidence string
+
+const (
+	FindingConfidenceCertain   FindingConfidence = "CERTAIN"
+	FindingConfidenceFirm      FindingConfidence = "FIRM"
+	FindingConfidenceTentative FindingConfidence = "TENTATIVE"
+)
+
+var AllFindingConfidence = []FindingConfidence{
+	FindingConfidenceCertain,
+	FindingConfidenceFirm,
+	FindingConfidenceTentative,
+}
+
+func (e FindingConfidence) IsValid() bool {
+	switch e {
+	case FindingConfidenceCertain, FindingConfidenceFirm, FindingConfidenceTentative:
+		return true
+	}
+	return false
+}
+
+func (e FindingConfidence) String() string {
+	return string(e)
+}
+
+func (e *FindingConfidence) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = FindingConfidence(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid FindingConfidence", str)
+	}
+	return nil
+}
+
+func (e FindingConfidence) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Pentest flow type — extends the existing Flow concept.
+type FlowType string
+
+const (
+	FlowTypeNewTest          FlowType = "NEW_TEST"
+	FlowTypeRetestDiff       FlowType = "RETEST_DIFF"
+	FlowTypeTargetedReverify FlowType = "TARGETED_REVERIFY"
+)
+
+var AllFlowType = []FlowType{
+	FlowTypeNewTest,
+	FlowTypeRetestDiff,
+	FlowTypeTargetedReverify,
+}
+
+func (e FlowType) IsValid() bool {
+	switch e {
+	case FlowTypeNewTest, FlowTypeRetestDiff, FlowTypeTargetedReverify:
+		return true
+	}
+	return false
+}
+
+func (e FlowType) String() string {
+	return string(e)
+}
+
+func (e *FlowType) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = FlowType(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid FlowType", str)
+	}
+	return nil
+}
+
+func (e FlowType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
 type MessageLogType string
 
 const (
@@ -719,6 +985,54 @@ func (e *MessageLogType) UnmarshalGQL(v interface{}) error {
 }
 
 func (e MessageLogType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Status of a scanner-report parse job.
+type ParseStatus string
+
+const (
+	ParseStatusPending   ParseStatus = "PENDING"
+	ParseStatusParsing   ParseStatus = "PARSING"
+	ParseStatusSucceeded ParseStatus = "SUCCEEDED"
+	ParseStatusFailed    ParseStatus = "FAILED"
+	ParseStatusPartial   ParseStatus = "PARTIAL"
+)
+
+var AllParseStatus = []ParseStatus{
+	ParseStatusPending,
+	ParseStatusParsing,
+	ParseStatusSucceeded,
+	ParseStatusFailed,
+	ParseStatusPartial,
+}
+
+func (e ParseStatus) IsValid() bool {
+	switch e {
+	case ParseStatusPending, ParseStatusParsing, ParseStatusSucceeded, ParseStatusFailed, ParseStatusPartial:
+		return true
+	}
+	return false
+}
+
+func (e ParseStatus) String() string {
+	return string(e)
+}
+
+func (e *ParseStatus) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ParseStatus(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ParseStatus", str)
+	}
+	return nil
+}
+
+func (e ParseStatus) MarshalGQL(w io.Writer) {
 	fmt.Fprint(w, strconv.Quote(e.String()))
 }
 
@@ -1070,6 +1384,194 @@ func (e ResultType) MarshalGQL(w io.Writer) {
 	fmt.Fprint(w, strconv.Quote(e.String()))
 }
 
+// Scanner source for an ingested report.
+type ScanSourceType string
+
+const (
+	ScanSourceTypeQualys    ScanSourceType = "QUALYS"
+	ScanSourceTypeTwistlock ScanSourceType = "TWISTLOCK"
+	ScanSourceTypeNmap      ScanSourceType = "NMAP"
+	ScanSourceTypeBurp      ScanSourceType = "BURP"
+)
+
+var AllScanSourceType = []ScanSourceType{
+	ScanSourceTypeQualys,
+	ScanSourceTypeTwistlock,
+	ScanSourceTypeNmap,
+	ScanSourceTypeBurp,
+}
+
+func (e ScanSourceType) IsValid() bool {
+	switch e {
+	case ScanSourceTypeQualys, ScanSourceTypeTwistlock, ScanSourceTypeNmap, ScanSourceTypeBurp:
+		return true
+	}
+	return false
+}
+
+func (e ScanSourceType) String() string {
+	return string(e)
+}
+
+func (e *ScanSourceType) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ScanSourceType(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ScanSourceType", str)
+	}
+	return nil
+}
+
+func (e ScanSourceType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Scope rule direction.
+type ScopeDirection string
+
+const (
+	ScopeDirectionInclude ScopeDirection = "INCLUDE"
+	ScopeDirectionExclude ScopeDirection = "EXCLUDE"
+)
+
+var AllScopeDirection = []ScopeDirection{
+	ScopeDirectionInclude,
+	ScopeDirectionExclude,
+}
+
+func (e ScopeDirection) IsValid() bool {
+	switch e {
+	case ScopeDirectionInclude, ScopeDirectionExclude:
+		return true
+	}
+	return false
+}
+
+func (e ScopeDirection) String() string {
+	return string(e)
+}
+
+func (e *ScopeDirection) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ScopeDirection(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ScopeDirection", str)
+	}
+	return nil
+}
+
+func (e ScopeDirection) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Scope rule type.
+type ScopeRuleType string
+
+const (
+	ScopeRuleTypeCidr              ScopeRuleType = "CIDR"
+	ScopeRuleTypeIP                ScopeRuleType = "IP"
+	ScopeRuleTypeDomain            ScopeRuleType = "DOMAIN"
+	ScopeRuleTypeDomainGlob        ScopeRuleType = "DOMAIN_GLOB"
+	ScopeRuleTypeURLPrefix         ScopeRuleType = "URL_PREFIX"
+	ScopeRuleTypeContainerImage    ScopeRuleType = "CONTAINER_IMAGE"
+	ScopeRuleTypeContainerRegistry ScopeRuleType = "CONTAINER_REGISTRY"
+)
+
+var AllScopeRuleType = []ScopeRuleType{
+	ScopeRuleTypeCidr,
+	ScopeRuleTypeIP,
+	ScopeRuleTypeDomain,
+	ScopeRuleTypeDomainGlob,
+	ScopeRuleTypeURLPrefix,
+	ScopeRuleTypeContainerImage,
+	ScopeRuleTypeContainerRegistry,
+}
+
+func (e ScopeRuleType) IsValid() bool {
+	switch e {
+	case ScopeRuleTypeCidr, ScopeRuleTypeIP, ScopeRuleTypeDomain, ScopeRuleTypeDomainGlob, ScopeRuleTypeURLPrefix, ScopeRuleTypeContainerImage, ScopeRuleTypeContainerRegistry:
+		return true
+	}
+	return false
+}
+
+func (e ScopeRuleType) String() string {
+	return string(e)
+}
+
+func (e *ScopeRuleType) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = ScopeRuleType(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid ScopeRuleType", str)
+	}
+	return nil
+}
+
+func (e ScopeRuleType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Severity of a finding.
+type SeverityLevel string
+
+const (
+	SeverityLevelInfo     SeverityLevel = "INFO"
+	SeverityLevelLow      SeverityLevel = "LOW"
+	SeverityLevelMedium   SeverityLevel = "MEDIUM"
+	SeverityLevelHigh     SeverityLevel = "HIGH"
+	SeverityLevelCritical SeverityLevel = "CRITICAL"
+)
+
+var AllSeverityLevel = []SeverityLevel{
+	SeverityLevelInfo,
+	SeverityLevelLow,
+	SeverityLevelMedium,
+	SeverityLevelHigh,
+	SeverityLevelCritical,
+}
+
+func (e SeverityLevel) IsValid() bool {
+	switch e {
+	case SeverityLevelInfo, SeverityLevelLow, SeverityLevelMedium, SeverityLevelHigh, SeverityLevelCritical:
+		return true
+	}
+	return false
+}
+
+func (e SeverityLevel) String() string {
+	return string(e)
+}
+
+func (e *SeverityLevel) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = SeverityLevel(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid SeverityLevel", str)
+	}
+	return nil
+}
+
+func (e SeverityLevel) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
 type StatusType string
 
 const (
@@ -1114,6 +1616,50 @@ func (e *StatusType) UnmarshalGQL(v interface{}) error {
 }
 
 func (e StatusType) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Target kind for a finding.
+type TargetKind string
+
+const (
+	TargetKindHost        TargetKind = "HOST"
+	TargetKindWebEndpoint TargetKind = "WEB_ENDPOINT"
+	TargetKindContainer   TargetKind = "CONTAINER"
+)
+
+var AllTargetKind = []TargetKind{
+	TargetKindHost,
+	TargetKindWebEndpoint,
+	TargetKindContainer,
+}
+
+func (e TargetKind) IsValid() bool {
+	switch e {
+	case TargetKindHost, TargetKindWebEndpoint, TargetKindContainer:
+		return true
+	}
+	return false
+}
+
+func (e TargetKind) String() string {
+	return string(e)
+}
+
+func (e *TargetKind) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = TargetKind(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid TargetKind", str)
+	}
+	return nil
+}
+
+func (e TargetKind) MarshalGQL(w io.Writer) {
 	fmt.Fprint(w, strconv.Quote(e.String()))
 }
 
@@ -1325,5 +1871,53 @@ func (e *VectorStoreAction) UnmarshalGQL(v interface{}) error {
 }
 
 func (e VectorStoreAction) MarshalGQL(w io.Writer) {
+	fmt.Fprint(w, strconv.Quote(e.String()))
+}
+
+// Verification state of a finding (set by an agent or pentester).
+type VerificationStatus string
+
+const (
+	VerificationStatusUnverified     VerificationStatus = "UNVERIFIED"
+	VerificationStatusVerifying      VerificationStatus = "VERIFYING"
+	VerificationStatusConfirmed      VerificationStatus = "CONFIRMED"
+	VerificationStatusFalsePositive  VerificationStatus = "FALSE_POSITIVE"
+	VerificationStatusNotExploitable VerificationStatus = "NOT_EXPLOITABLE"
+)
+
+var AllVerificationStatus = []VerificationStatus{
+	VerificationStatusUnverified,
+	VerificationStatusVerifying,
+	VerificationStatusConfirmed,
+	VerificationStatusFalsePositive,
+	VerificationStatusNotExploitable,
+}
+
+func (e VerificationStatus) IsValid() bool {
+	switch e {
+	case VerificationStatusUnverified, VerificationStatusVerifying, VerificationStatusConfirmed, VerificationStatusFalsePositive, VerificationStatusNotExploitable:
+		return true
+	}
+	return false
+}
+
+func (e VerificationStatus) String() string {
+	return string(e)
+}
+
+func (e *VerificationStatus) UnmarshalGQL(v interface{}) error {
+	str, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("enums must be strings")
+	}
+
+	*e = VerificationStatus(str)
+	if !e.IsValid() {
+		return fmt.Errorf("%s is not a valid VerificationStatus", str)
+	}
+	return nil
+}
+
+func (e VerificationStatus) MarshalGQL(w io.Writer) {
 	fmt.Fprint(w, strconv.Quote(e.String()))
 }

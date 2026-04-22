@@ -10,10 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	"pentagi/pkg/controller"
 	"pentagi/pkg/database"
 	"pentagi/pkg/database/converter"
 	"pentagi/pkg/graph/model"
+	ingestionengagement "pentagi/pkg/ingestion/engagement"
 	"pentagi/pkg/providers/anthropic"
 	"pentagi/pkg/providers/bedrock"
 	"pentagi/pkg/providers/deepseek"
@@ -27,7 +31,6 @@ import (
 	"pentagi/pkg/server/auth"
 	"pentagi/pkg/templates"
 	"pentagi/pkg/templates/validator"
-	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -1076,6 +1079,111 @@ func (r *mutationResolver) DeleteFlowTemplate(ctx context.Context, templateID in
 	r.Subscriptions.NewFlowPublisher(uid, 0).FlowTemplateDeleted(ctx, template)
 
 	return model.ResultTypeSuccess, nil
+}
+
+// CreateEngagement is the resolver for the createEngagement field.
+// The REST surface in pkg/server/services/ingestion.go gates on plain auth
+// only; we mirror that here by requiring a user-session userID out of the
+// gqlgen context and delegating to the same engagement.Service.
+func (r *mutationResolver) CreateEngagement(ctx context.Context, input model.CreateEngagementInput) (*model.Engagement, error) {
+	uid, err := GetUserID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unauthorized: %w", err)
+	}
+
+	description := ""
+	if input.Description != nil {
+		description = *input.Description
+	}
+
+	row, err := r.Engagements.Create(ctx, ingestionengagement.CreateInput{
+		Name:        input.Name,
+		Client:      input.Client,
+		Description: description,
+		CreatedBy:   int64(uid),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return converter.ConvertEngagement(row, nil, nil, nil, nil, nil), nil
+}
+
+// AddScopeRule is the resolver for the addScopeRule field.
+func (r *mutationResolver) AddScopeRule(ctx context.Context, engagementID int64, input model.ScopeRuleInput) (*model.ScopeRule, error) {
+	if _, err := GetUserID(ctx); err != nil {
+		return nil, fmt.Errorf("unauthorized: %w", err)
+	}
+
+	direction := database.ScopeDirectionInclude
+	if input.Direction != nil {
+		direction = database.ScopeDirection(strings.ToLower(string(*input.Direction)))
+	}
+
+	var note sql.NullString
+	if input.Note != nil && *input.Note != "" {
+		note = sql.NullString{String: *input.Note, Valid: true}
+	}
+
+	rule, err := r.DB.AddScopeRule(ctx, database.AddScopeRuleParams{
+		EngagementID: engagementID,
+		RuleType:     database.ScopeRuleType(strings.ToLower(string(input.RuleType))),
+		Value:        input.Value,
+		Direction:    direction,
+		Note:         note,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return converter.ConvertScopeRule(rule), nil
+}
+
+// DeleteScopeRule is the resolver for the deleteScopeRule field.
+//
+// The SQLC query DeleteScopeRule is keyed on the (id, engagement_id) tuple
+// for safety, but the GraphQL schema only takes the rule id. Rather than
+// invent a new persistence layer in this phase, the resolver returns an
+// explicit error pointing callers at the REST DELETE endpoint for now.
+//
+// TODO(phase14): add a GetScopeRule/DeleteScopeRuleByID SQLC query so this
+// resolver can look up the parent engagement and call the existing query
+// safely, OR accept engagementID as a GraphQL arg in a schema revision.
+func (r *mutationResolver) DeleteScopeRule(ctx context.Context, id int64) (bool, error) {
+	if _, err := GetUserID(ctx); err != nil {
+		return false, fmt.Errorf("unauthorized: %w", err)
+	}
+	return false, fmt.Errorf(
+		"deleteScopeRule via GraphQL is not yet wired; use DELETE /engagements/:id/scope-rules/:ruleId",
+	)
+}
+
+// VerifyFinding is the resolver for the verifyFinding field.
+func (r *mutationResolver) VerifyFinding(ctx context.Context, id int64, input model.VerifyFindingInput) (*model.Finding, error) {
+	uid, err := GetUserID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unauthorized: %w", err)
+	}
+
+	var notes sql.NullString
+	if input.Notes != nil && *input.Notes != "" {
+		notes = sql.NullString{String: *input.Notes, Valid: true}
+	}
+
+	f, err := r.DB.UpdateFindingVerification(ctx, database.UpdateFindingVerificationParams{
+		ID:                 id,
+		VerificationStatus: database.VerificationStatus(strings.ToLower(string(input.VerificationStatus))),
+		VerificationNotes:  notes,
+		VerifiedBy:         sql.NullInt64{Int64: int64(uid), Valid: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Fetch the source report so we can populate Finding.sources.
+	rep, repErr := r.DB.GetScanReport(ctx, f.ScanReportID)
+	reportsByID := map[int64]database.ScanReport{}
+	if repErr == nil {
+		reportsByID[rep.ID] = rep
+	}
+	return converter.ConvertFinding(f, reportsByID), nil
 }
 
 // Providers is the resolver for the providers field.
@@ -2157,6 +2265,90 @@ func (r *queryResolver) FlowTemplates(ctx context.Context) ([]*model.FlowTemplat
 	return converter.ConvertFlowTemplates(templates), nil
 }
 
+// Engagement is the resolver for the engagement field.
+// Eagerly loads scope rules, scan reports, recent findings, and stats in
+// one pass so the frontend's engagement-detail page only costs a single
+// round-trip. For deep paging the REST endpoints should be preferred.
+func (r *queryResolver) Engagement(ctx context.Context, id int64) (*model.Engagement, error) {
+	if _, err := GetUserID(ctx); err != nil {
+		return nil, fmt.Errorf("unauthorized: %w", err)
+	}
+
+	eng, err := r.DB.GetEngagement(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	rules, err := r.DB.ListScopeRules(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list scope rules: %w", err)
+	}
+
+	reports, err := r.DB.ListScanReports(ctx, database.ListScanReportsParams{
+		EngagementID: id,
+		Limit:        200,
+		Offset:       0,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list scan reports: %w", err)
+	}
+
+	// Match the GraphQL schema default of 50 for the findings collection.
+	findings, err := r.DB.ListFindings(ctx, database.ListFindingsParams{
+		EngagementID: id,
+		Limit:        50,
+		Offset:       0,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list findings: %w", err)
+	}
+
+	stats, err := r.DB.EngagementFindingStats(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("finding stats: %w", err)
+	}
+
+	reportsByID := make(map[int64]database.ScanReport, len(reports))
+	for _, rep := range reports {
+		reportsByID[rep.ID] = rep
+	}
+	return converter.ConvertEngagement(eng, rules, reports, findings, reportsByID, &stats), nil
+}
+
+// Engagements is the resolver for the engagements field.
+// Returns a shallow list — nested collections are empty so the caller can
+// fetch details via engagement(id:) on-demand.
+func (r *queryResolver) Engagements(ctx context.Context, limit *int, offset *int) ([]*model.Engagement, error) {
+	if _, err := GetUserID(ctx); err != nil {
+		return nil, fmt.Errorf("unauthorized: %w", err)
+	}
+
+	l, o := int64(50), int64(0)
+	if limit != nil {
+		l = int64(*limit)
+	}
+	if offset != nil {
+		o = int64(*offset)
+	}
+
+	rows, err := r.DB.ListEngagements(ctx, database.ListEngagementsParams{
+		Limit:  l,
+		Offset: o,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*model.Engagement, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, converter.ConvertEngagement(row, nil, nil, nil, nil, nil))
+	}
+	return out, nil
+}
+
 // FlowCreated is the resolver for the flowCreated field.
 func (r *subscriptionResolver) FlowCreated(ctx context.Context) (<-chan *model.Flow, error) {
 	uid, admin, err := validatePermission(ctx, "flows.subscribe")
@@ -2503,6 +2695,38 @@ func (r *subscriptionResolver) FlowTemplateDeleted(ctx context.Context) (<-chan 
 	}
 
 	return r.Subscriptions.NewFlowSubscriber(uid, 0).FlowTemplateDeleted(ctx)
+}
+
+// ReportIngested is the resolver for the reportIngested field.
+//
+// Phase 12 declares the subscription surface so frontend work in Phase 15
+// can compile. The event-source side (pkg/server/services/ingestion.go and
+// the async parse worker) does not yet publish to the engagement bus —
+// that wiring lands in Phase 14 together with the FlowType / RetestDiff
+// integration. Until then we hand back an already-closed channel so any
+// subscriber terminates cleanly without blocking.
+//
+// TODO(phase14): route through a proper engagement-keyed publisher once
+// the controller publishes upload/parse transitions.
+func (r *subscriptionResolver) ReportIngested(ctx context.Context, engagementID int64) (<-chan *model.ScanReport, error) {
+	if _, err := GetUserID(ctx); err != nil {
+		return nil, fmt.Errorf("unauthorized: %w", err)
+	}
+	ch := make(chan *model.ScanReport)
+	close(ch)
+	return ch, nil
+}
+
+// FindingsUpdated is the resolver for the findingsUpdated field.
+// See ReportIngested for the deferral rationale.
+// TODO(phase14): wire to a finding-upsert / verification-change publisher.
+func (r *subscriptionResolver) FindingsUpdated(ctx context.Context, engagementID int64) (<-chan *model.Finding, error) {
+	if _, err := GetUserID(ctx); err != nil {
+		return nil, fmt.Errorf("unauthorized: %w", err)
+	}
+	ch := make(chan *model.Finding)
+	close(ch)
+	return ch, nil
 }
 
 // Mutation returns MutationResolver implementation.

@@ -147,12 +147,13 @@ func NewRouter(
 	promptService := services.NewPromptService(orm)
 	analyticsService := services.NewAnalyticsService(orm)
 	tokenService := services.NewTokenService(orm, cfg.CookieSigningSalt, tokenCache, subscriptions)
+	engagementService := engagement.NewService(db)
 	graphqlService := services.NewGraphqlService(
-		db, cfg, baseURL, cfg.CorsOrigins, tokenCache, providers, controller, subscriptions,
+		db, cfg, baseURL, cfg.CorsOrigins, tokenCache, providers, controller, subscriptions, engagementService,
 	)
 	ingestionService := services.NewIngestionService(
 		db,
-		engagement.NewService(db),
+		engagementService,
 		ingestionSeeder,
 		cfg.IngestionStorageDir,
 		logrus.WithField("component", "ingestion"),
