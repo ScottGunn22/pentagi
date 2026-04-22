@@ -9,6 +9,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type AssistantStatus string
@@ -143,6 +144,183 @@ func (ns NullContainerType) Value() (driver.Value, error) {
 	return string(ns.ContainerType), nil
 }
 
+type DiffState string
+
+const (
+	DiffStateFixed      DiffState = "fixed"
+	DiffStatePersistent DiffState = "persistent"
+	DiffStateNew        DiffState = "new"
+	DiffStateRegressed  DiffState = "regressed"
+)
+
+func (e *DiffState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = DiffState(s)
+	case string:
+		*e = DiffState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for DiffState: %T", src)
+	}
+	return nil
+}
+
+type NullDiffState struct {
+	DiffState DiffState `json:"diff_state"`
+	Valid     bool      `json:"valid"` // Valid is true if DiffState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullDiffState) Scan(value interface{}) error {
+	if value == nil {
+		ns.DiffState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.DiffState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullDiffState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.DiffState), nil
+}
+
+type EngagementStatus string
+
+const (
+	EngagementStatusActive    EngagementStatus = "active"
+	EngagementStatusOnHold    EngagementStatus = "on_hold"
+	EngagementStatusCompleted EngagementStatus = "completed"
+	EngagementStatusArchived  EngagementStatus = "archived"
+)
+
+func (e *EngagementStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = EngagementStatus(s)
+	case string:
+		*e = EngagementStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for EngagementStatus: %T", src)
+	}
+	return nil
+}
+
+type NullEngagementStatus struct {
+	EngagementStatus EngagementStatus `json:"engagement_status"`
+	Valid            bool             `json:"valid"` // Valid is true if EngagementStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullEngagementStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.EngagementStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.EngagementStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullEngagementStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.EngagementStatus), nil
+}
+
+type FindingConfidence string
+
+const (
+	FindingConfidenceCertain   FindingConfidence = "certain"
+	FindingConfidenceFirm      FindingConfidence = "firm"
+	FindingConfidenceTentative FindingConfidence = "tentative"
+)
+
+func (e *FindingConfidence) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = FindingConfidence(s)
+	case string:
+		*e = FindingConfidence(s)
+	default:
+		return fmt.Errorf("unsupported scan type for FindingConfidence: %T", src)
+	}
+	return nil
+}
+
+type NullFindingConfidence struct {
+	FindingConfidence FindingConfidence `json:"finding_confidence"`
+	Valid             bool              `json:"valid"` // Valid is true if FindingConfidence is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullFindingConfidence) Scan(value interface{}) error {
+	if value == nil {
+		ns.FindingConfidence, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.FindingConfidence.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullFindingConfidence) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.FindingConfidence), nil
+}
+
+type FindingType string
+
+const (
+	FindingTypeVulnerability       FindingType = "vulnerability"
+	FindingTypeWebIssue            FindingType = "web_issue"
+	FindingTypeExposedService      FindingType = "exposed_service"
+	FindingTypeContainerCve        FindingType = "container_cve"
+	FindingTypeContainerCompliance FindingType = "container_compliance"
+	FindingTypeSecretExposure      FindingType = "secret_exposure"
+)
+
+func (e *FindingType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = FindingType(s)
+	case string:
+		*e = FindingType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for FindingType: %T", src)
+	}
+	return nil
+}
+
+type NullFindingType struct {
+	FindingType FindingType `json:"finding_type"`
+	Valid       bool        `json:"valid"` // Valid is true if FindingType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullFindingType) Scan(value interface{}) error {
+	if value == nil {
+		ns.FindingType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.FindingType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullFindingType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.FindingType), nil
+}
+
 type FlowStatus string
 
 const (
@@ -186,6 +364,49 @@ func (ns NullFlowStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.FlowStatus), nil
+}
+
+type FlowType string
+
+const (
+	FlowTypeNewTest          FlowType = "new_test"
+	FlowTypeRetestDiff       FlowType = "retest_diff"
+	FlowTypeTargetedReverify FlowType = "targeted_reverify"
+)
+
+func (e *FlowType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = FlowType(s)
+	case string:
+		*e = FlowType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for FlowType: %T", src)
+	}
+	return nil
+}
+
+type NullFlowType struct {
+	FlowType FlowType `json:"flow_type"`
+	Valid    bool     `json:"valid"` // Valid is true if FlowType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullFlowType) Scan(value interface{}) error {
+	if value == nil {
+		ns.FlowType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.FlowType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullFlowType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.FlowType), nil
 }
 
 type MsgchainType string
@@ -337,6 +558,51 @@ func (ns NullMsglogType) Value() (driver.Value, error) {
 	return string(ns.MsglogType), nil
 }
 
+type ParseStatus string
+
+const (
+	ParseStatusPending   ParseStatus = "pending"
+	ParseStatusParsing   ParseStatus = "parsing"
+	ParseStatusSucceeded ParseStatus = "succeeded"
+	ParseStatusFailed    ParseStatus = "failed"
+	ParseStatusPartial   ParseStatus = "partial"
+)
+
+func (e *ParseStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ParseStatus(s)
+	case string:
+		*e = ParseStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ParseStatus: %T", src)
+	}
+	return nil
+}
+
+type NullParseStatus struct {
+	ParseStatus ParseStatus `json:"parse_status"`
+	Valid       bool        `json:"valid"` // Valid is true if ParseStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullParseStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.ParseStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ParseStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullParseStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ParseStatus), nil
+}
+
 type PromptType string
 
 const (
@@ -466,6 +732,139 @@ func (ns NullProviderType) Value() (driver.Value, error) {
 	return string(ns.ProviderType), nil
 }
 
+type ScanSourceType string
+
+const (
+	ScanSourceTypeQualys    ScanSourceType = "qualys"
+	ScanSourceTypeTwistlock ScanSourceType = "twistlock"
+	ScanSourceTypeNmap      ScanSourceType = "nmap"
+	ScanSourceTypeBurp      ScanSourceType = "burp"
+)
+
+func (e *ScanSourceType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ScanSourceType(s)
+	case string:
+		*e = ScanSourceType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ScanSourceType: %T", src)
+	}
+	return nil
+}
+
+type NullScanSourceType struct {
+	ScanSourceType ScanSourceType `json:"scan_source_type"`
+	Valid          bool           `json:"valid"` // Valid is true if ScanSourceType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullScanSourceType) Scan(value interface{}) error {
+	if value == nil {
+		ns.ScanSourceType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ScanSourceType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullScanSourceType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ScanSourceType), nil
+}
+
+type ScopeDirection string
+
+const (
+	ScopeDirectionInclude ScopeDirection = "include"
+	ScopeDirectionExclude ScopeDirection = "exclude"
+)
+
+func (e *ScopeDirection) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ScopeDirection(s)
+	case string:
+		*e = ScopeDirection(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ScopeDirection: %T", src)
+	}
+	return nil
+}
+
+type NullScopeDirection struct {
+	ScopeDirection ScopeDirection `json:"scope_direction"`
+	Valid          bool           `json:"valid"` // Valid is true if ScopeDirection is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullScopeDirection) Scan(value interface{}) error {
+	if value == nil {
+		ns.ScopeDirection, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ScopeDirection.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullScopeDirection) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ScopeDirection), nil
+}
+
+type ScopeRuleType string
+
+const (
+	ScopeRuleTypeCidr              ScopeRuleType = "cidr"
+	ScopeRuleTypeIp                ScopeRuleType = "ip"
+	ScopeRuleTypeDomain            ScopeRuleType = "domain"
+	ScopeRuleTypeDomainGlob        ScopeRuleType = "domain_glob"
+	ScopeRuleTypeUrlPrefix         ScopeRuleType = "url_prefix"
+	ScopeRuleTypeContainerImage    ScopeRuleType = "container_image"
+	ScopeRuleTypeContainerRegistry ScopeRuleType = "container_registry"
+)
+
+func (e *ScopeRuleType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ScopeRuleType(s)
+	case string:
+		*e = ScopeRuleType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ScopeRuleType: %T", src)
+	}
+	return nil
+}
+
+type NullScopeRuleType struct {
+	ScopeRuleType ScopeRuleType `json:"scope_rule_type"`
+	Valid         bool          `json:"valid"` // Valid is true if ScopeRuleType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullScopeRuleType) Scan(value interface{}) error {
+	if value == nil {
+		ns.ScopeRuleType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ScopeRuleType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullScopeRuleType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ScopeRuleType), nil
+}
+
 type SearchengineType string
 
 const (
@@ -514,6 +913,51 @@ func (ns NullSearchengineType) Value() (driver.Value, error) {
 	return string(ns.SearchengineType), nil
 }
 
+type SeverityLevel string
+
+const (
+	SeverityLevelInfo     SeverityLevel = "info"
+	SeverityLevelLow      SeverityLevel = "low"
+	SeverityLevelMedium   SeverityLevel = "medium"
+	SeverityLevelHigh     SeverityLevel = "high"
+	SeverityLevelCritical SeverityLevel = "critical"
+)
+
+func (e *SeverityLevel) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = SeverityLevel(s)
+	case string:
+		*e = SeverityLevel(s)
+	default:
+		return fmt.Errorf("unsupported scan type for SeverityLevel: %T", src)
+	}
+	return nil
+}
+
+type NullSeverityLevel struct {
+	SeverityLevel SeverityLevel `json:"severity_level"`
+	Valid         bool          `json:"valid"` // Valid is true if SeverityLevel is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullSeverityLevel) Scan(value interface{}) error {
+	if value == nil {
+		ns.SeverityLevel, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.SeverityLevel.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullSeverityLevel) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.SeverityLevel), nil
+}
+
 type SubtaskStatus string
 
 const (
@@ -557,6 +1001,49 @@ func (ns NullSubtaskStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.SubtaskStatus), nil
+}
+
+type TargetKind string
+
+const (
+	TargetKindHost        TargetKind = "host"
+	TargetKindWebEndpoint TargetKind = "web_endpoint"
+	TargetKindContainer   TargetKind = "container"
+)
+
+func (e *TargetKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = TargetKind(s)
+	case string:
+		*e = TargetKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for TargetKind: %T", src)
+	}
+	return nil
+}
+
+type NullTargetKind struct {
+	TargetKind TargetKind `json:"target_kind"`
+	Valid      bool       `json:"valid"` // Valid is true if TargetKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullTargetKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.TargetKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.TargetKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullTargetKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.TargetKind), nil
 }
 
 type TaskStatus string
@@ -860,6 +1347,51 @@ func (ns NullVecstoreActionType) Value() (driver.Value, error) {
 	return string(ns.VecstoreActionType), nil
 }
 
+type VerificationStatus string
+
+const (
+	VerificationStatusUnverified     VerificationStatus = "unverified"
+	VerificationStatusVerifying      VerificationStatus = "verifying"
+	VerificationStatusConfirmed      VerificationStatus = "confirmed"
+	VerificationStatusFalsePositive  VerificationStatus = "false_positive"
+	VerificationStatusNotExploitable VerificationStatus = "not_exploitable"
+)
+
+func (e *VerificationStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = VerificationStatus(s)
+	case string:
+		*e = VerificationStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for VerificationStatus: %T", src)
+	}
+	return nil
+}
+
+type NullVerificationStatus struct {
+	VerificationStatus VerificationStatus `json:"verification_status"`
+	Valid              bool               `json:"valid"` // Valid is true if VerificationStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullVerificationStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.VerificationStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.VerificationStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullVerificationStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.VerificationStatus), nil
+}
+
 type Agentlog struct {
 	ID        int64         `json:"id"`
 	Initiator MsgchainType  `json:"initiator"`
@@ -929,6 +1461,65 @@ type Container struct {
 	UpdatedAt sql.NullTime    `json:"updated_at"`
 }
 
+type Engagement struct {
+	ID              int64            `json:"id"`
+	Name            string           `json:"name"`
+	Client          string           `json:"client"`
+	Description     sql.NullString   `json:"description"`
+	Status          EngagementStatus `json:"status"`
+	GraphitiGroupID string           `json:"graphiti_group_id"`
+	StartsAt        sql.NullTime     `json:"starts_at"`
+	EndsAt          sql.NullTime     `json:"ends_at"`
+	CreatedBy       int64            `json:"created_by"`
+	UpdatedBy       int64            `json:"updated_by"`
+	TeamID          sql.NullInt64    `json:"team_id"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+	DeletedAt       sql.NullTime     `json:"deleted_at"`
+}
+
+type EngagementScopeRule struct {
+	ID           int64          `json:"id"`
+	EngagementID int64          `json:"engagement_id"`
+	RuleType     ScopeRuleType  `json:"rule_type"`
+	Value        string         `json:"value"`
+	Direction    ScopeDirection `json:"direction"`
+	Note         sql.NullString `json:"note"`
+	CreatedAt    time.Time      `json:"created_at"`
+}
+
+type Finding struct {
+	ID                 int64              `json:"id"`
+	EngagementID       int64              `json:"engagement_id"`
+	ScanReportID       int64              `json:"scan_report_id"`
+	FindingType        FindingType        `json:"finding_type"`
+	TargetKind         TargetKind         `json:"target_kind"`
+	TargetRef          string             `json:"target_ref"`
+	Title              string             `json:"title"`
+	Cve                sql.NullString     `json:"cve"`
+	CvssScore          sql.NullString     `json:"cvss_score"`
+	Severity           SeverityLevel      `json:"severity"`
+	Confidence         FindingConfidence  `json:"confidence"`
+	SourceID           sql.NullString     `json:"source_id"`
+	Evidence           json.RawMessage    `json:"evidence"`
+	InScope            bool               `json:"in_scope"`
+	VerificationStatus VerificationStatus `json:"verification_status"`
+	VerifiedBy         sql.NullInt64      `json:"verified_by"`
+	VerifiedAt         sql.NullTime       `json:"verified_at"`
+	VerificationNotes  sql.NullString     `json:"verification_notes"`
+	GraphSeededAt      sql.NullTime       `json:"graph_seeded_at"`
+	FirstSeenAt        time.Time          `json:"first_seen_at"`
+	LastSeenAt         time.Time          `json:"last_seen_at"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+}
+
+type FindingSource struct {
+	FindingID      int64           `json:"finding_id"`
+	ScanReportID   int64           `json:"scan_report_id"`
+	SourceEvidence json.RawMessage `json:"source_evidence"`
+}
+
 type Flow struct {
 	ID                 int64           `json:"id"`
 	Status             FlowStatus      `json:"status"`
@@ -944,6 +1535,20 @@ type Flow struct {
 	TraceID            sql.NullString  `json:"trace_id"`
 	ModelProviderType  ProviderType    `json:"model_provider_type"`
 	ToolCallIDTemplate string          `json:"tool_call_id_template"`
+	EngagementID       sql.NullInt64   `json:"engagement_id"`
+	FlowType           FlowType        `json:"flow_type"`
+	BaselineFlowID     sql.NullInt64   `json:"baseline_flow_id"`
+}
+
+type FlowRetestDiff struct {
+	FlowID    int64     `json:"flow_id"`
+	FindingID int64     `json:"finding_id"`
+	DiffState DiffState `json:"diff_state"`
+}
+
+type FlowRetestTarget struct {
+	FlowID    int64 `json:"flow_id"`
+	FindingID int64 `json:"finding_id"`
 }
 
 type FlowTemplate struct {
@@ -1017,6 +1622,31 @@ type Provider struct {
 type Role struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
+}
+
+type ScanReport struct {
+	ID               int64          `json:"id"`
+	EngagementID     int64          `json:"engagement_id"`
+	SourceType       ScanSourceType `json:"source_type"`
+	OriginalFilename string         `json:"original_filename"`
+	StorageUri       string         `json:"storage_uri"`
+	Sha256           string         `json:"sha256"`
+	ScanDate         sql.NullTime   `json:"scan_date"`
+	IngestedAt       time.Time      `json:"ingested_at"`
+	ParserVersion    string         `json:"parser_version"`
+	ParseStatus      ParseStatus    `json:"parse_status"`
+	ParseError       sql.NullString `json:"parse_error"`
+	FindingCount     int32          `json:"finding_count"`
+	UploadedBy       int64          `json:"uploaded_by"`
+}
+
+type ScopeViolation struct {
+	ID           int64         `json:"id"`
+	FlowID       sql.NullInt64 `json:"flow_id"`
+	EngagementID sql.NullInt64 `json:"engagement_id"`
+	ToolName     string        `json:"tool_name"`
+	Target       string        `json:"target"`
+	OccurredAt   time.Time     `json:"occurred_at"`
 }
 
 type Screenshot struct {

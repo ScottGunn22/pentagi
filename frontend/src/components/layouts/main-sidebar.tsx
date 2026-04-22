@@ -12,6 +12,7 @@ import {
     Plus,
     Settings,
     Settings2,
+    ShieldCheck,
     Star,
     Sun,
     UserIcon,
@@ -93,6 +94,7 @@ export const MainSidebar = () => {
     const isDashboardActive = useMatch('/dashboard');
     const isFlowsActive = useMatch('/flows/*');
     const isTemplatesActive = useMatch('/templates/*');
+    const isEngagementsActive = useMatch('/engagements/*');
     const isSettingsActive = useMatch('/settings/*');
     const { flowId: flowIdParam } = useParams<{ flowId: string }>();
 
@@ -194,6 +196,26 @@ export const MainSidebar = () => {
                                     showOnHover
                                 >
                                     <Link to="/templates/new">
+                                        <Plus />
+                                    </Link>
+                                </SidebarMenuAction>
+                            </SidebarMenuItem>
+                            <SidebarMenuItem>
+                                <SidebarMenuButton
+                                    asChild
+                                    isActive={!!isEngagementsActive}
+                                >
+                                    <Link to="/engagements">
+                                        <ShieldCheck />
+                                        Engagements
+                                    </Link>
+                                </SidebarMenuButton>
+                                <SidebarMenuAction
+                                    asChild
+                                    className="data-[state=open]:bg-accent rounded-sm"
+                                    showOnHover
+                                >
+                                    <Link to="/engagements/new">
                                         <Plus />
                                     </Link>
                                 </SidebarMenuAction>

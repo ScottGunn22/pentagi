@@ -357,7 +357,20 @@ func (s *FlowService) CreateFlow(c *gin.Context) {
 	}
 	prvtype := prv.Type()
 
-	fw, err := s.fc.CreateFlow(c, int64(uid), createFlow.Input, prvname, prvtype, createFlow.Functions)
+	// Thread the optional engagement/retest args through so REST matches the
+	// GraphQL createFlow mutation. Per-flow-type invariants are enforced in
+	// newFlowWorkerCtx.validateEngagementParams — errors surface as 500 here,
+	// which is acceptable for a developer-facing API in Phase 14.
+	opts := controller.EngagementFlowOptions{
+		EngagementID:   createFlow.EngagementID,
+		BaselineFlowID: createFlow.BaselineFlowID,
+		RetestTargets:  createFlow.RetestTargetFindingIDs,
+	}
+	if createFlow.FlowType != nil {
+		opts.FlowType = database.FlowType(*createFlow.FlowType)
+	}
+
+	fw, err := s.fc.CreateFlow(c, int64(uid), createFlow.Input, prvname, prvtype, createFlow.Functions, opts)
 	if err != nil {
 		logger.FromContext(c).WithError(err).Errorf("error creating flow")
 		response.Error(c, response.ErrInternal, err)

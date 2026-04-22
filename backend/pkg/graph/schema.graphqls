@@ -1,5 +1,9 @@
 scalar Time
 
+# Force a field to be resolved by a resolver method instead of being read
+# directly from the generated model struct (gqlgen extension).
+directive @goField(forceResolver: Boolean, name: String) on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
 # Core execution status for flows, tasks and agents
 enum StatusType {
   created
@@ -855,7 +859,14 @@ type Query {
 
 type Mutation {
   # Flow management
-  createFlow(modelProvider: String!, input: String!): Flow!
+  createFlow(
+    modelProvider: String!
+    input: String!
+    engagementId: ID
+    flowType: FlowType = NEW_TEST
+    baselineFlowId: ID
+    retestTargetFindingIds: [ID!]
+  ): Flow!
   putUserInput(flowId: ID!, input: String!, modelProvider: String): ResultType!
   stopFlow(flowId: ID!): ResultType!
   finishFlow(flowId: ID!): ResultType!
@@ -937,4 +948,152 @@ type Subscription {
   flowTemplateCreated: FlowTemplate!
   flowTemplateUpdated: FlowTemplate!
   flowTemplateDeleted: FlowTemplate!
+}
+
+# ==================== Scanner Ingestion ====================
+
+"Engagement status."
+enum EngagementStatus { ACTIVE ON_HOLD COMPLETED ARCHIVED }
+
+"Scanner source for an ingested report."
+enum ScanSourceType { QUALYS TWISTLOCK NMAP BURP }
+
+"Status of a scanner-report parse job."
+enum ParseStatus { PENDING PARSING SUCCEEDED FAILED PARTIAL }
+
+"Severity of a finding."
+enum SeverityLevel { INFO LOW MEDIUM HIGH CRITICAL }
+
+"Scanner-reported confidence."
+enum FindingConfidence { CERTAIN FIRM TENTATIVE }
+
+"Verification state of a finding (set by an agent or pentester)."
+enum VerificationStatus { UNVERIFIED VERIFYING CONFIRMED FALSE_POSITIVE NOT_EXPLOITABLE }
+
+"Pentest flow type — extends the existing Flow concept."
+enum FlowType { NEW_TEST RETEST_DIFF TARGETED_REVERIFY }
+
+"Diff state for a finding within a retest_diff flow."
+enum DiffState { FIXED PERSISTENT NEW REGRESSED }
+
+"Target kind for a finding."
+enum TargetKind { HOST WEB_ENDPOINT CONTAINER }
+
+"Scope rule type."
+enum ScopeRuleType { CIDR IP DOMAIN DOMAIN_GLOB URL_PREFIX CONTAINER_IMAGE CONTAINER_REGISTRY }
+
+"Scope rule direction."
+enum ScopeDirection { INCLUDE EXCLUDE }
+
+"An Engagement groups scanner data, findings, and pentest flows under one SOW."
+type Engagement {
+  id: ID!
+  name: String!
+  client: String!
+  description: String
+  status: EngagementStatus!
+  scopeRules: [ScopeRule!]!
+  scanReports: [ScanReport!]!
+  "Recent findings (severity-ranked then by CVSS); use the REST API for paged access."
+  findings(limit: Int = 50): [Finding!]!
+  findingStats: FindingStats!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+type ScopeRule {
+  id: ID!
+  ruleType: ScopeRuleType!
+  value: String!
+  direction: ScopeDirection!
+  note: String
+}
+
+type ScanReport {
+  id: ID!
+  sourceType: ScanSourceType!
+  originalFilename: String!
+  scanDate: Time
+  ingestedAt: Time!
+  parseStatus: ParseStatus!
+  parseError: String
+  findingCount: Int!
+}
+
+"Discriminator + opaque target reference (e.g. ip:10.1.2.3:443/tcp)."
+type Target {
+  kind: TargetKind!
+  ref: String!
+}
+
+type Finding {
+  id: ID!
+  title: String!
+  cve: String
+  cvssScore: Float
+  severity: SeverityLevel!
+  confidence: FindingConfidence!
+  target: Target!
+  inScope: Boolean!
+  verificationStatus: VerificationStatus!
+  "Source-trust chain — the same logical finding can be evidenced by N reports."
+  sources: [ScanReport!]!
+  evidence: String!
+  firstSeenAt: Time!
+  lastSeenAt: Time!
+}
+
+type FindingStats {
+  critical: Int!
+  high: Int!
+  medium: Int!
+  low: Int!
+  info: Int!
+  outOfScope: Int!
+  confirmed: Int!
+}
+
+input CreateEngagementInput {
+  name: String!
+  client: String!
+  description: String
+}
+
+input ScopeRuleInput {
+  ruleType: ScopeRuleType!
+  value: String!
+  direction: ScopeDirection = INCLUDE
+  note: String
+}
+
+input VerifyFindingInput {
+  verificationStatus: VerificationStatus!
+  notes: String
+}
+
+extend type Query {
+  engagement(id: ID!): Engagement
+  engagements(limit: Int = 50, offset: Int = 0): [Engagement!]!
+}
+
+extend type Mutation {
+  createEngagement(input: CreateEngagementInput!): Engagement!
+  addScopeRule(engagementId: ID!, input: ScopeRuleInput!): ScopeRule!
+  deleteScopeRule(id: ID!): Boolean!
+  verifyFinding(id: ID!, input: VerifyFindingInput!): Finding!
+}
+
+# Engagement-aware fields on Flow (Phase 14 — legacy flows resolve
+# these as null/NEW_TEST).
+extend type Flow {
+  engagement: Engagement @goField(forceResolver: true)
+  flowType: FlowType!
+  baselineFlow: Flow @goField(forceResolver: true)
+}
+
+extend type Subscription {
+  "Fires whenever a scan report transitions parse_status."
+  reportIngested(engagementId: ID!): ScanReport!
+  "Fires whenever a finding is upserted or its verification changes."
+  findingsUpdated(engagementId: ID!): Finding!
 }

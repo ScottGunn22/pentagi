@@ -23,6 +23,134 @@ definitions:
         example: success
         type: string
     type: object
+  database.Engagement:
+    properties:
+      client:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: integer
+      deleted_at:
+        $ref: '#/definitions/sql.NullTime'
+      description:
+        $ref: '#/definitions/sql.NullString'
+      ends_at:
+        $ref: '#/definitions/sql.NullTime'
+      graphiti_group_id:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+      starts_at:
+        $ref: '#/definitions/sql.NullTime'
+      status:
+        type: string
+      team_id:
+        $ref: '#/definitions/sql.NullInt64'
+      updated_at:
+        type: string
+      updated_by:
+        type: integer
+    type: object
+  database.EngagementScopeRule:
+    properties:
+      created_at:
+        type: string
+      direction:
+        type: string
+      engagement_id:
+        type: integer
+      id:
+        type: integer
+      note:
+        $ref: '#/definitions/sql.NullString'
+      rule_type:
+        type: string
+      value:
+        type: string
+    type: object
+  database.Finding:
+    properties:
+      confidence:
+        type: string
+      created_at:
+        type: string
+      cve:
+        $ref: '#/definitions/sql.NullString'
+      cvss_score:
+        $ref: '#/definitions/sql.NullString'
+      engagement_id:
+        type: integer
+      evidence:
+        items:
+          type: integer
+        type: array
+      finding_type:
+        type: string
+      first_seen_at:
+        type: string
+      graph_seeded_at:
+        $ref: '#/definitions/sql.NullTime'
+      id:
+        type: integer
+      in_scope:
+        type: boolean
+      last_seen_at:
+        type: string
+      scan_report_id:
+        type: integer
+      severity:
+        type: string
+      source_id:
+        $ref: '#/definitions/sql.NullString'
+      target_kind:
+        type: string
+      target_ref:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+      verification_notes:
+        $ref: '#/definitions/sql.NullString'
+      verification_status:
+        type: string
+      verified_at:
+        $ref: '#/definitions/sql.NullTime'
+      verified_by:
+        $ref: '#/definitions/sql.NullInt64'
+    type: object
+  database.ScanReport:
+    properties:
+      engagement_id:
+        type: integer
+      finding_count:
+        type: integer
+      id:
+        type: integer
+      ingested_at:
+        type: string
+      original_filename:
+        type: string
+      parse_error:
+        $ref: '#/definitions/sql.NullString'
+      parse_status:
+        type: string
+      parser_version:
+        type: string
+      scan_date:
+        $ref: '#/definitions/sql.NullTime'
+      sha256:
+        type: string
+      source_type:
+        type: string
+      storage_uri:
+        type: string
+      uploaded_by:
+        type: integer
+    type: object
   gqlerror.Error:
     properties:
       extensions:
@@ -418,6 +546,26 @@ definitions:
     type: object
   models.CreateFlow:
     properties:
+      baseline_flow_id:
+        example: 101
+        minimum: 1
+        type: integer
+      engagement_id:
+        description: |-
+          Engagement-aware fields (Phase 14). All optional; zero values yield a
+          legacy flow with no engagement context. Per-flow-type invariants
+          (retest_diff⇒baseline, targeted_reverify⇒targets) are enforced in the
+          controller rather than here so GraphQL + REST share one code path.
+        example: 42
+        minimum: 1
+        type: integer
+      flow_type:
+        enum:
+        - new_test
+        - retest_diff
+        - targeted_reverify
+        example: new_test
+        type: string
       functions:
         $ref: '#/definitions/tools.Functions'
       input:
@@ -426,6 +574,14 @@ definitions:
       provider:
         example: openai
         type: string
+      retest_target_finding_ids:
+        example:
+        - 1
+        - 2
+        - 3
+        items:
+          type: integer
+        type: array
     required:
     - input
     - provider
@@ -1324,6 +1480,21 @@ definitions:
     - initiator
     - query
     type: object
+  services.addScopeRuleRequest:
+    properties:
+      direction:
+        description: optional — defaults to "include"
+        type: string
+      note:
+        type: string
+      rule_type:
+        type: string
+      value:
+        type: string
+    required:
+    - rule_type
+    - value
+    type: object
   services.agentlogs:
     properties:
       agentlogs:
@@ -1359,6 +1530,18 @@ definitions:
         type: array
       total:
         type: integer
+    type: object
+  services.createEngagementRequest:
+    properties:
+      client:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - client
+    - name
     type: object
   services.flows:
     properties:
@@ -1475,6 +1658,26 @@ definitions:
       total:
         type: integer
     type: object
+  services.updateEngagementRequest:
+    properties:
+      client:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+    type: object
+  services.updateFindingVerificationRequest:
+    properties:
+      notes:
+        type: string
+      verification_status:
+        type: string
+    required:
+    - verification_status
+    type: object
   services.users:
     properties:
       total:
@@ -1492,6 +1695,30 @@ definitions:
         items:
           $ref: '#/definitions/models.Vecstorelog'
         type: array
+    type: object
+  sql.NullInt64:
+    properties:
+      int64:
+        type: integer
+      valid:
+        description: Valid is true if Int64 is not NULL
+        type: boolean
+    type: object
+  sql.NullString:
+    properties:
+      string:
+        type: string
+      valid:
+        description: Valid is true if String is not NULL
+        type: boolean
+    type: object
+  sql.NullTime:
+    properties:
+      time:
+        type: string
+      valid:
+        description: Valid is true if Time is not NULL
+        type: boolean
     type: object
   tools.DisableFunction:
     properties:
@@ -1971,6 +2198,431 @@ paths:
       summary: Retrieve containers list
       tags:
       - Containers
+  /engagements/:
+    get:
+      parameters:
+      - description: page size (default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/database.Engagement'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: List engagements
+      tags:
+      - Ingestion
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: engagement details
+        in: body
+        name: json
+        required: true
+        schema:
+          $ref: '#/definitions/services.createEngagementRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/database.Engagement'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Create a new engagement
+      tags:
+      - Ingestion
+  /engagements/{id}:
+    delete:
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: engagement deleted
+      security:
+      - BearerAuth: []
+      summary: Soft-delete an engagement
+      tags:
+      - Ingestion
+    get:
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/database.Engagement'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get an engagement by id
+      tags:
+      - Ingestion
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: fields to patch
+        in: body
+        name: json
+        required: true
+        schema:
+          $ref: '#/definitions/services.updateEngagementRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/database.Engagement'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Update engagement fields
+      tags:
+      - Ingestion
+  /engagements/{id}/findings:
+    get:
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 'filter: info|low|medium|high|critical'
+        in: query
+        name: severity
+        type: string
+      - description: 'filter: exact CVE id'
+        in: query
+        name: cve
+        type: string
+      - description: 'filter: host|web_endpoint|container'
+        in: query
+        name: target_kind
+        type: string
+      - description: 'filter: true|false'
+        in: query
+        name: in_scope
+        type: boolean
+      - description: filter verification status
+        in: query
+        name: verification_status
+        type: string
+      - description: page size (default 100)
+        in: query
+        name: limit
+        type: integer
+      - description: offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/database.Finding'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: List findings for an engagement
+      tags:
+      - Ingestion
+  /engagements/{id}/findings/{findingId}:
+    get:
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: finding id
+        in: path
+        name: findingId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/database.Finding'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get a single finding
+      tags:
+      - Ingestion
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: finding id
+        in: path
+        name: findingId
+        required: true
+        type: integer
+      - description: verification payload
+        in: body
+        name: json
+        required: true
+        schema:
+          $ref: '#/definitions/services.updateFindingVerificationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/database.Finding'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Patch a finding's verification status
+      tags:
+      - Ingestion
+  /engagements/{id}/reports:
+    get:
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/database.ScanReport'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: List scan reports for an engagement
+      tags:
+      - Ingestion
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: scanner source (nmap|burp|qualys|twistlock)
+        in: formData
+        name: source_type
+        required: true
+        type: string
+      - description: report file
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/database.ScanReport'
+              type: object
+        "409":
+          description: already ingested
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Upload a scanner report
+      tags:
+      - Ingestion
+  /engagements/{id}/reports/{reportId}:
+    get:
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: scan report id
+        in: path
+        name: reportId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/database.ScanReport'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get a scan report
+      tags:
+      - Ingestion
+  /engagements/{id}/reports/{reportId}/raw:
+    get:
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: scan report id
+        in: path
+        name: reportId
+        required: true
+        type: integer
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: report file
+      security:
+      - BearerAuth: []
+      summary: Download the original scan report file
+      tags:
+      - Ingestion
+  /engagements/{id}/scope-rules:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: scope rule
+        in: body
+        name: json
+        required: true
+        schema:
+          $ref: '#/definitions/services.addScopeRuleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/SuccessResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/database.EngagementScopeRule'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Attach a scope rule to an engagement
+      tags:
+      - Ingestion
+  /engagements/{id}/scope-rules/{ruleId}:
+    delete:
+      parameters:
+      - description: engagement id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: scope rule id
+        in: path
+        name: ruleId
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: scope rule deleted
+      security:
+      - BearerAuth: []
+      summary: Delete a scope rule
+      tags:
+      - Ingestion
   /flows/:
     get:
       parameters:

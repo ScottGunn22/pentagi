@@ -947,8 +947,22 @@ mutation deleteFlowTemplate($templateId: ID!) {
 
 # ==================== Flows ====================
 
-mutation createFlow($modelProvider: String!, $input: String!) {
-    createFlow(modelProvider: $modelProvider, input: $input) {
+mutation createFlow(
+    $modelProvider: String!
+    $input: String!
+    $engagementId: ID
+    $flowType: FlowType
+    $baselineFlowId: ID
+    $retestTargetFindingIds: [ID!]
+) {
+    createFlow(
+        modelProvider: $modelProvider
+        input: $input
+        engagementId: $engagementId
+        flowType: $flowType
+        baselineFlowId: $baselineFlowId
+        retestTargetFindingIds: $retestTargetFindingIds
+    ) {
         ...flowFragment
     }
 }
@@ -1231,5 +1245,123 @@ subscription flowTemplateUpdated {
 subscription flowTemplateDeleted {
     flowTemplateDeleted {
         ...flowTemplateFragment
+    }
+}
+
+# ==================== Scanner Ingestion ====================
+
+fragment findingStatsFragment on FindingStats {
+    critical
+    high
+    medium
+    low
+    info
+    outOfScope
+    confirmed
+}
+
+fragment scopeRuleFragment on ScopeRule {
+    id
+    ruleType
+    value
+    direction
+    note
+}
+
+fragment scanReportFragment on ScanReport {
+    id
+    sourceType
+    originalFilename
+    scanDate
+    parseStatus
+    parseError
+    findingCount
+    ingestedAt
+}
+
+fragment findingFragment on Finding {
+    id
+    title
+    severity
+    confidence
+    cve
+    cvssScore
+    target {
+        kind
+        ref
+    }
+    inScope
+    verificationStatus
+    firstSeenAt
+    lastSeenAt
+}
+
+fragment engagementListItemFragment on Engagement {
+    id
+    name
+    client
+    status
+    findingStats {
+        ...findingStatsFragment
+    }
+    updatedAt
+}
+
+fragment engagementDetailFragment on Engagement {
+    id
+    name
+    client
+    description
+    status
+    scopeRules {
+        ...scopeRuleFragment
+    }
+    scanReports {
+        ...scanReportFragment
+    }
+    findingStats {
+        ...findingStatsFragment
+    }
+    createdAt
+    updatedAt
+}
+
+query engagements {
+    engagements {
+        ...engagementListItemFragment
+    }
+}
+
+query engagement($id: ID!) {
+    engagement(id: $id) {
+        ...engagementDetailFragment
+        findings(limit: 200) {
+            ...findingFragment
+        }
+    }
+}
+
+mutation createEngagement($input: CreateEngagementInput!) {
+    createEngagement(input: $input) {
+        id
+        name
+        client
+    }
+}
+
+mutation addScopeRule($engagementId: ID!, $input: ScopeRuleInput!) {
+    addScopeRule(engagementId: $engagementId, input: $input) {
+        ...scopeRuleFragment
+    }
+}
+
+mutation deleteScopeRule($id: ID!) {
+    deleteScopeRule(id: $id)
+}
+
+mutation verifyFinding($id: ID!, $input: VerifyFindingInput!) {
+    verifyFinding(id: $id, input: $input) {
+        id
+        verificationStatus
     }
 }

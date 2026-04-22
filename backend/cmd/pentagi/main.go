@@ -19,6 +19,8 @@ import (
 	"pentagi/pkg/database"
 	"pentagi/pkg/docker"
 	"pentagi/pkg/graph/subscriptions"
+	"pentagi/pkg/graphiti"
+	"pentagi/pkg/ingestion/seeder"
 	obs "pentagi/pkg/observability"
 	"pentagi/pkg/providers"
 	router "pentagi/pkg/server"
@@ -119,7 +121,28 @@ func main() {
 		log.Fatalf("Active flows restoration failed: %v", err)
 	}
 
-	r := router.NewRouter(queries, orm, cfg, providers, controller, subscriptions)
+	// Scanner-report ingestion storage. Must exist at startup so the REST
+	// handler can stream uploads straight to disk without racing on MkdirAll.
+	if err := os.MkdirAll(cfg.IngestionStorageDir, 0o755); err != nil {
+		log.Fatalf("Ingestion storage dir setup failed: %v", err)
+	}
+
+	// Build the seeder off the same graphiti client configuration the
+	// providers layer uses. A disabled / misconfigured Graphiti is non-fatal:
+	// the seeder becomes a no-op writer and the reconciler will retry once
+	// Graphiti comes up.
+	graphitiClient, err := graphiti.NewClient(
+		cfg.GraphitiURL,
+		time.Duration(cfg.GraphitiTimeout)*time.Second,
+		cfg.GraphitiEnabled && cfg.GraphitiURL != "",
+	)
+	if err != nil {
+		logrus.WithError(err).Warn("graphiti client init failed for ingestion seeder; continuing without it")
+		graphitiClient = &graphiti.Client{}
+	}
+	ingestionSeeder := seeder.NewSeeder(graphitiClient)
+
+	r := router.NewRouter(queries, orm, cfg, providers, controller, subscriptions, ingestionSeeder)
 
 	// Launch HTTP/HTTPS server in background goroutine
 	serverErrChan := make(chan error, 1)

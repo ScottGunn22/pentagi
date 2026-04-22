@@ -9,11 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"database/sql"
+
 	"pentagi/pkg/cast"
 	"pentagi/pkg/config"
 	"pentagi/pkg/database"
 	"pentagi/pkg/docker"
 	"pentagi/pkg/graph/subscriptions"
+	"pentagi/pkg/ingestion/engagement"
 	obs "pentagi/pkg/observability"
 	"pentagi/pkg/observability/langfuse"
 	"pentagi/pkg/providers"
@@ -26,6 +29,164 @@ import (
 )
 
 const stopTaskTimeout = 5 * time.Second
+
+// flowEngagementID extracts the optional engagement_id from a flow row as a
+// *int64 suitable for tools.NewFlowToolsExecutor. Legacy flows whose
+// engagement_id is NULL return nil; engagement-aware flows return a pointer
+// to the id.
+func flowEngagementID(flow database.Flow) *int64 {
+	if !flow.EngagementID.Valid {
+		return nil
+	}
+	id := flow.EngagementID.Int64
+	return &id
+}
+
+// flowEngagementIDByID is the lookup variant — used from code paths that
+// don't already hold a database.Flow row (assistant.go). Returns nil on any
+// error so legacy flows aren't blocked by engagement-lookup failures.
+func flowEngagementIDByID(ctx context.Context, db database.Querier, flowID int64) *int64 {
+	flow, err := db.GetFlow(ctx, flowID)
+	if err != nil {
+		return nil
+	}
+	return flowEngagementID(flow)
+}
+
+// validateEngagementParams enforces the per-flow-type invariants. A missing
+// engagement_id means the legacy path; flow_type defaults to new_test in
+// that case. retest_diff requires a baseline flow; targeted_reverify
+// requires a target finding list.
+func (fwc *newFlowWorkerCtx) validateEngagementParams() error {
+	// Legacy: no engagement means everything else must be absent and we
+	// fall through to the pre-Phase-14 code path.
+	if fwc.engagementID == nil {
+		if fwc.flowType != "" && fwc.flowType != database.FlowTypeNewTest {
+			return fmt.Errorf("flow_type %q requires engagement_id", fwc.flowType)
+		}
+		if fwc.baselineFlowID != nil {
+			return errors.New("baseline_flow_id requires engagement_id")
+		}
+		if len(fwc.retestTargetFindingID) > 0 {
+			return errors.New("retest_target_finding_ids require engagement_id")
+		}
+		return nil
+	}
+
+	// Default flow type for engagement-aware flows without an explicit
+	// choice is new_test.
+	if fwc.flowType == "" {
+		fwc.flowType = database.FlowTypeNewTest
+	}
+
+	switch fwc.flowType {
+	case database.FlowTypeNewTest:
+		if fwc.baselineFlowID != nil {
+			return errors.New("new_test flows must not set baseline_flow_id")
+		}
+		if len(fwc.retestTargetFindingID) > 0 {
+			return errors.New("new_test flows must not set retest_target_finding_ids")
+		}
+	case database.FlowTypeRetestDiff:
+		if fwc.baselineFlowID == nil || *fwc.baselineFlowID <= 0 {
+			return errors.New("retest_diff flows require baseline_flow_id")
+		}
+		if len(fwc.retestTargetFindingID) > 0 {
+			return errors.New("retest_diff flows must not set retest_target_finding_ids")
+		}
+	case database.FlowTypeTargetedReverify:
+		if len(fwc.retestTargetFindingID) == 0 {
+			return errors.New("targeted_reverify flows require at least one retest_target_finding_id")
+		}
+		if fwc.baselineFlowID != nil {
+			return errors.New("targeted_reverify flows must not set baseline_flow_id")
+		}
+	default:
+		return fmt.Errorf("unknown flow_type %q", fwc.flowType)
+	}
+	return nil
+}
+
+// engagementPromptNudge returns a short context block the agent should see
+// ahead of the user's initial prompt when the flow has engagement context.
+// The block summarises ingested findings by severity and tells the agent
+// which tools to reach for first. Returns "" for legacy flows or on lookup
+// errors (best-effort — a missing nudge should not prevent the flow from
+// running).
+func (fwc *newFlowWorkerCtx) engagementPromptNudge(ctx context.Context, flow database.Flow) string {
+	if !flow.EngagementID.Valid {
+		return ""
+	}
+	eng, err := fwc.db.GetEngagement(ctx, flow.EngagementID.Int64)
+	if err != nil {
+		return ""
+	}
+	stats, err := fwc.db.EngagementFindingStats(ctx, flow.EngagementID.Int64)
+	if err != nil {
+		return ""
+	}
+	block := fmt.Sprintf(
+		"Engagement: %s (client: %s)\nIngested findings: %d critical, %d high, %d medium, %d low, %d info.\n"+
+			"Before re-running recon, call list_findings or get_top_findings_by_cvss to consult existing\n"+
+			"scanner data. When you've verified a finding, record the result with mark_finding_verified.\n"+
+			"Every tool call is checked against the engagement's scope rules — out-of-scope calls are\n"+
+			"blocked and audited.",
+		eng.Name, eng.Client,
+		stats.CriticalCount, stats.HighCount, stats.MediumCount, stats.LowCount, stats.InfoCount,
+	)
+	switch flow.FlowType {
+	case database.FlowTypeRetestDiff:
+		block += "\n\nThis is a retest_diff flow. Call get_retest_diff to see what changed since the baseline flow " +
+			"(fixed / persistent / new). Focus your effort on persistent and new findings."
+	case database.FlowTypeTargetedReverify:
+		block += "\n\nThis is a targeted_reverify flow. Only the findings in flow_retest_targets are in scope for this " +
+			"run — use list_findings to list them, re-verify with real exploits, and record conclusions via " +
+			"mark_finding_verified."
+	}
+	return block
+}
+
+// applyEngagementToFlow runs the flow-type pre-flight: patches the flow row
+// with engagement/flow_type/baseline columns, then populates
+// flow_retest_targets (for targeted_reverify) or flow_retest_diff (for
+// retest_diff).
+func (fwc *newFlowWorkerCtx) applyEngagementToFlow(ctx context.Context, flowID int64) error {
+	updateParams := database.UpdateFlowEngagementParams{
+		ID:           flowID,
+		EngagementID: sql.NullInt64{Int64: *fwc.engagementID, Valid: true},
+		FlowType:     fwc.flowType,
+	}
+	if fwc.baselineFlowID != nil {
+		updateParams.BaselineFlowID = sql.NullInt64{Int64: *fwc.baselineFlowID, Valid: true}
+	}
+	if err := fwc.db.UpdateFlowEngagement(ctx, updateParams); err != nil {
+		return fmt.Errorf("UpdateFlowEngagement: %w", err)
+	}
+
+	switch fwc.flowType {
+	case database.FlowTypeTargetedReverify:
+		for _, fid := range fwc.retestTargetFindingID {
+			if err := fwc.db.InsertFlowRetestTarget(ctx, database.InsertFlowRetestTargetParams{
+				FlowID:    flowID,
+				FindingID: fid,
+			}); err != nil {
+				return fmt.Errorf("InsertFlowRetestTarget(%d): %w", fid, err)
+			}
+		}
+	case database.FlowTypeRetestDiff:
+		rows, err := engagement.ComputeRetestDiff(ctx, fwc.db, *fwc.engagementID, *fwc.baselineFlowID)
+		if err != nil {
+			return fmt.Errorf("ComputeRetestDiff: %w", err)
+		}
+		for _, r := range rows {
+			r.FlowID = flowID
+			if err := fwc.db.InsertFlowRetestDiff(ctx, r); err != nil {
+				return fmt.Errorf("InsertFlowRetestDiff(%d,%s): %w", r.FindingID, r.DiffState, err)
+			}
+		}
+	}
+	return nil
+}
 
 type FlowWorker interface {
 	GetFlowID() int64
@@ -67,6 +228,14 @@ type newFlowWorkerCtx struct {
 	prvname   provider.ProviderName
 	prvtype   provider.ProviderType
 	functions *tools.Functions
+
+	// Engagement-aware flow parameters (Phase 14). All optional; zero
+	// values yield the pre-Phase-14 behavior (legacy "new_test" flow
+	// with no engagement context).
+	engagementID          *int64
+	flowType              database.FlowType
+	baselineFlowID        *int64
+	retestTargetFindingID []int64
 
 	flowWorkerCtx
 }
@@ -114,6 +283,13 @@ func NewFlowWorker(
 	ctx, span := obs.Observer.NewSpan(ctx, obs.SpanKindInternal, "controller.NewFlowWorker")
 	defer span.End()
 
+	// Engagement parameters must validate before we touch the DB. These
+	// arrive as a bundle from the caller (controller or resolver) and the
+	// combinations are fixed by the flow_type enum.
+	if err := fwc.validateEngagementParams(); err != nil {
+		return nil, fmt.Errorf("invalid engagement parameters: %w", err)
+	}
+
 	flow, err := fwc.db.CreateFlow(ctx, database.CreateFlowParams{
 		Title:              "untitled",
 		Status:             database.FlowStatusCreated,
@@ -128,6 +304,23 @@ func NewFlowWorker(
 	if err != nil {
 		logrus.WithError(err).Error("failed to create flow in DB")
 		return nil, fmt.Errorf("failed to create flow in DB: %w", err)
+	}
+
+	// When the caller asked for engagement context, patch the row we just
+	// inserted (CreateFlow has a fixed legacy param list). Also run the
+	// flow-type-specific pre-flight: populate flow_retest_targets for
+	// targeted_reverify, compute and persist flow_retest_diff for
+	// retest_diff.
+	if fwc.engagementID != nil {
+		if err := fwc.applyEngagementToFlow(ctx, flow.ID); err != nil {
+			return nil, fmt.Errorf("failed to apply engagement context to flow %d: %w", flow.ID, err)
+		}
+		// re-read so downstream code sees the new columns populated.
+		refreshed, err := fwc.db.GetFlow(ctx, flow.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reload flow %d after engagement apply: %w", flow.ID, err)
+		}
+		flow = refreshed
 	}
 
 	logger := logrus.WithContext(ctx).WithFields(logrus.Fields{
@@ -167,7 +360,7 @@ func NewFlowWorker(
 	ctx, _ = flowSpan.Observation(ctx)
 
 	prompter := templates.NewDefaultPrompter() // TODO: change to flow prompter by userID from DB
-	executor, err := tools.NewFlowToolsExecutor(fwc.db, fwc.cfg, fwc.docker, fwc.functions, flow.ID)
+	executor, err := tools.NewFlowToolsExecutor(fwc.db, fwc.cfg, fwc.docker, fwc.functions, flow.ID, flowEngagementID(flow))
 	if err != nil {
 		return nil, wrapErrorEndSpan(ctx, flowSpan, "failed to create flow tools executor", err)
 	}
@@ -264,7 +457,11 @@ func NewFlowWorker(
 	go fw.worker()
 
 	if !fwc.dryRun {
-		if err := fw.PutInput(ctx, fwc.input, nil); err != nil {
+		initialInput := fwc.input
+		if nudge := fwc.engagementPromptNudge(ctx, flow); nudge != "" {
+			initialInput = nudge + "\n\nUser request:\n" + initialInput
+		}
+		if err := fw.PutInput(ctx, initialInput, nil); err != nil {
 			return nil, wrapErrorEndSpan(ctx, flowSpan, "failed to run flow worker", err)
 		}
 	}
@@ -333,7 +530,7 @@ func LoadFlowWorker(ctx context.Context, flow database.Flow, fwc flowWorkerCtx) 
 	}
 
 	prompter := templates.NewDefaultPrompter() // TODO: change to flow prompter by userID from DB
-	executor, err := tools.NewFlowToolsExecutor(fwc.db, fwc.cfg, fwc.docker, functions, flow.ID)
+	executor, err := tools.NewFlowToolsExecutor(fwc.db, fwc.cfg, fwc.docker, functions, flow.ID, flowEngagementID(flow))
 	if err != nil {
 		return nil, wrapErrorEndSpan(ctx, flowSpan, "failed to create flow tools executor", err)
 	}

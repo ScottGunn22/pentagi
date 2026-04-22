@@ -323,3 +323,9 @@ func (i *Int64) String() string {
 	}
 	return strconv.FormatInt(int64(*i), 10)
 }
+
+// Engagement-findings tool arg structs live in pkg/ingestion/findings/tools.go
+// (ListFindingsAction, TopFindingsByCVSSAction, FindingsByKindAction,
+// GetFindingByIDAction, MarkFindingVerifiedAction, GetRetestDiffAction).
+// They were moved there in Phase 14 to break the import cycle created by
+// pkg/tools referencing the handler implementations.

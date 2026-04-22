@@ -17,6 +17,8 @@ import (
 	"pentagi/pkg/controller"
 	"pentagi/pkg/database"
 	"pentagi/pkg/graph/subscriptions"
+	"pentagi/pkg/ingestion/engagement"
+	"pentagi/pkg/ingestion/seeder"
 	"pentagi/pkg/providers"
 	"pentagi/pkg/server/auth"
 	"pentagi/pkg/server/logger"
@@ -79,6 +81,7 @@ func NewRouter(
 	providers providers.ProviderController,
 	controller controller.FlowController,
 	subscriptions subscriptions.SubscriptionsController,
+	ingestionSeeder *seeder.Seeder,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	if cfg.Debug {
@@ -144,8 +147,16 @@ func NewRouter(
 	promptService := services.NewPromptService(orm)
 	analyticsService := services.NewAnalyticsService(orm)
 	tokenService := services.NewTokenService(orm, cfg.CookieSigningSalt, tokenCache, subscriptions)
+	engagementService := engagement.NewService(db)
 	graphqlService := services.NewGraphqlService(
-		db, cfg, baseURL, cfg.CorsOrigins, tokenCache, providers, controller, subscriptions,
+		db, cfg, baseURL, cfg.CorsOrigins, tokenCache, providers, controller, subscriptions, engagementService,
+	)
+	ingestionService := services.NewIngestionService(
+		db,
+		engagementService,
+		ingestionSeeder,
+		cfg.IngestionStorageDir,
+		logrus.WithField("component", "ingestion"),
 	)
 
 	router := gin.Default()
@@ -236,6 +247,7 @@ func NewRouter(
 		setScreenshotsGroup(privateGroup, screenshotService)
 		setPromptsGroup(privateGroup, promptService)
 		setAnalyticsGroup(privateGroup, analyticsService)
+		setIngestionGroup(privateGroup, ingestionService)
 	}
 
 	privateUserGroup := api.Group("/")
@@ -563,5 +575,31 @@ func setTokensGroup(parent *gin.RouterGroup, svc *services.TokenService) {
 		tokensGroup.GET("/:tokenID", svc.GetToken)
 		tokensGroup.PUT("/:tokenID", svc.UpdateToken)
 		tokensGroup.DELETE("/:tokenID", svc.DeleteToken)
+	}
+}
+
+// setIngestionGroup wires the scanner-report ingestion REST surface:
+// engagements, scope rules, scan reports, findings. See
+// pkg/server/services/ingestion.go for handler implementations.
+func setIngestionGroup(parent *gin.RouterGroup, svc *services.IngestionService) {
+	engagements := parent.Group("/engagements")
+	{
+		engagements.POST("/", svc.CreateEngagement)
+		engagements.GET("/", svc.ListEngagements)
+		engagements.GET("/:id", svc.GetEngagement)
+		engagements.PATCH("/:id", svc.UpdateEngagement)
+		engagements.DELETE("/:id", svc.DeleteEngagement)
+
+		engagements.POST("/:id/scope-rules", svc.AddScopeRule)
+		engagements.DELETE("/:id/scope-rules/:ruleId", svc.DeleteScopeRule)
+
+		engagements.POST("/:id/reports", svc.UploadReport)
+		engagements.GET("/:id/reports", svc.ListReports)
+		engagements.GET("/:id/reports/:reportId", svc.GetReport)
+		engagements.GET("/:id/reports/:reportId/raw", svc.DownloadReport)
+
+		engagements.GET("/:id/findings", svc.ListFindings)
+		engagements.GET("/:id/findings/:findingId", svc.GetFinding)
+		engagements.PATCH("/:id/findings/:findingId", svc.UpdateFindingVerification)
 	}
 }

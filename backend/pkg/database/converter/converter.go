@@ -2,6 +2,7 @@ package converter
 
 import (
 	"encoding/json"
+	"strings"
 
 	"pentagi/pkg/database"
 	"pentagi/pkg/graph/model"
@@ -33,6 +34,14 @@ func ConvertFlow(flow database.Flow, containers []database.Container) *model.Flo
 		Name: flow.ModelProviderName,
 		Type: model.ProviderType(flow.ModelProviderType),
 	}
+	// Engagement context is best-effort — callers that care (e.g. the
+	// engagement-detail page) fetch the engagement and baseline flow
+	// separately. We only surface the Phase 14 flow_type enum here; empty
+	// rows (legacy flows) default to NEW_TEST.
+	ft := model.FlowTypeNewTest
+	if string(flow.FlowType) != "" {
+		ft = model.FlowType(strings.ToUpper(string(flow.FlowType)))
+	}
 	return &model.Flow{
 		ID:        flow.ID,
 		Title:     flow.Title,
@@ -41,6 +50,7 @@ func ConvertFlow(flow database.Flow, containers []database.Container) *model.Flo
 		Provider:  provider,
 		CreatedAt: flow.CreatedAt.Time,
 		UpdatedAt: flow.UpdatedAt.Time,
+		FlowType:  ft,
 	}
 }
 

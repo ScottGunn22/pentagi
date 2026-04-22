@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"pentagi/pkg/ingestion/scope"
 	obs "pentagi/pkg/observability"
 	"pentagi/pkg/observability/langfuse"
 
@@ -471,4 +472,18 @@ func (b *browser) callScraper(url string) ([]byte, error) {
 
 func (b *browser) IsAvailable() bool {
 	return b.scPrvURL != "" || b.scPubURL != ""
+}
+
+// Targets implements scope.TargetExtractor: a browser action targets exactly
+// the URL in its arguments. Returns nil for parse errors or an empty URL (the
+// gate then passes through; the inner handler will fail with a clearer error).
+func (b *browser) Targets(raw json.RawMessage) []scope.Target {
+	var args Browser
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return nil
+	}
+	if args.Url == "" {
+		return nil
+	}
+	return []scope.Target{{Kind: "url", Ref: args.Url}}
 }

@@ -5,6 +5,7 @@ import (
 	"pentagi/pkg/controller"
 	"pentagi/pkg/database"
 	"pentagi/pkg/graph/subscriptions"
+	"pentagi/pkg/ingestion/engagement"
 	"pentagi/pkg/providers"
 	"pentagi/pkg/server/auth"
 	"pentagi/pkg/templates"
@@ -25,4 +26,5 @@ type Resolver struct {
 	ProvidersCtrl   providers.ProviderController
 	Controller      controller.FlowController
 	Subscriptions   subscriptions.SubscriptionsController
+	Engagements     *engagement.Service
 }
