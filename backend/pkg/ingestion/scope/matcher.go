@@ -90,6 +90,12 @@ func NewMatcher(rules []Rule) (*Matcher, error) {
 //	url:[<METHOD> ]<url>        — HTTP(S) URL, optional leading verb
 //	img:<ref>                   — OCI image reference
 func (m *Matcher) InScope(target string) bool {
+	// Fail-closed shortcut: a matcher with no rules denies everything.
+	// Keeps the most pathological hot-path (gate runs on every tool call)
+	// at O(1) and makes the invariant visible at the top of the function.
+	if len(m.rules) == 0 {
+		return false
+	}
 	kind, body := splitTarget(target)
 	include := false
 	for _, r := range m.rules {
@@ -167,6 +173,10 @@ func (m *Matcher) ruleMatches(r Rule, kind, body string) bool {
 
 // extractHost parses "10.1.2.3:443/tcp" → "10.1.2.3". For bodies with
 // no colon (e.g. a bare IP) the whole body is returned.
+//
+// IPv4-only: bracketed IPv6 hosts (e.g. "[::1]:443/tcp") are NOT handled.
+// All v1 parsers (Phase 5+) emit IPv4 targets; revisit when IPv6
+// scanner output is introduced.
 func extractHost(body string) string {
 	if i := strings.IndexByte(body, ':'); i >= 0 {
 		return body[:i]
@@ -194,8 +204,12 @@ func extractURLOnly(body string) string {
 	return body
 }
 
-// matchGlob supports leading-"*." globs ("*.foo.com" matches
-// "x.foo.com" but not "foo.com") and exact matches for anything else.
+// matchGlob supports only the leading-"*." form ("*.foo.com" matches
+// "x.foo.com" but not "foo.com") plus exact matches for anything else.
+// Arbitrary globs ("*.foo.*", "f??.com") are intentionally unsupported:
+// they add complexity and DOS surface for zero use cases seen in
+// engagement scopes. If a need emerges, add a new RuleType (e.g.
+// "domain_regex") rather than widening this function.
 func matchGlob(pat, host string) bool {
 	if strings.HasPrefix(pat, "*.") {
 		return strings.HasSuffix(host, pat[1:]) && host != pat[2:]

@@ -166,6 +166,19 @@ func TestMatcher_EmptyValueRejected(t *testing.T) {
 	}
 }
 
+// TestMatcher_RuleMatchesUnknownTypeIsFalse covers the defensive default
+// branch in ruleMatches that NewMatcher's validation prevents from ever
+// being reached in normal use. Constructing the Matcher literal bypasses
+// NewMatcher so we can exercise the otherwise-dead line and prove the
+// behaviour is fail-safe (returns false) if a future RuleType is added
+// to the type set without a matching switch case.
+func TestMatcher_RuleMatchesUnknownTypeIsFalse(t *testing.T) {
+	m := &Matcher{rules: []Rule{{Type: RuleType("future_unknown"), Value: "x", Direction: DirectionInclude}}}
+	if m.InScope("ip:10.1.2.3:443/tcp") {
+		t.Fatal("unknown rule type must default-deny, not silently match")
+	}
+}
+
 // TestMatcher_KindMismatch covers the "wrong kind" early-return branch
 // for every rule type: a CIDR rule should never match a host: target,
 // an IP rule should never match a url: target, etc. This drives the
