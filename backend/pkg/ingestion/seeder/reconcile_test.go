@@ -3,6 +3,8 @@ package seeder
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"pentagi/pkg/database"
@@ -38,20 +40,22 @@ func (f fakeEngagementLookup) GroupID(_ context.Context, _ int64) (string, error
 	return f.group, nil
 }
 
+// flakyClient fails whenever any message name contains the trailing segment
+// ":<failOnID>" — which matches the deterministic finding:<ref>:<id> form
+// emitted by both the seeder and the reconciler.
 type flakyClient struct {
 	failOnID int64
 	calls    []string
 }
 
 func (f *flakyClient) AddMessages(_ context.Context, req graphiti.AddMessagesRequest) error {
-	// encode finding id into trailing segment for test assertion
 	for _, m := range req.Messages {
 		f.calls = append(f.calls, m.Name)
 	}
 	if f.failOnID != 0 {
-		// messages are named finding:<ref>:<id>; fail whenever req's first message ends with :<failOnID>
+		suffix := fmt.Sprintf(":%d", f.failOnID)
 		for _, m := range req.Messages {
-			if len(m.Name) > 0 && (m.Name[len(m.Name)-1] == byte('0'+byte(f.failOnID))) {
+			if strings.HasSuffix(m.Name, suffix) {
 				return errors.New("synthetic write failure")
 			}
 		}
@@ -68,6 +72,7 @@ func TestReconcile_MarksSeeded(t *testing.T) {
 		Repo:        repo,
 		GroupLookup: fakeEngagementLookup{group: "eng-x"},
 		Client:      &fakeClient{},
+		// Logger intentionally nil — nil-safety path exercised here.
 	}
 	if err := r.ReconcileOnce(context.Background(), 10); err != nil {
 		t.Fatal(err)
@@ -104,5 +109,31 @@ func TestReconcile_PropagatesGroupLookupError(t *testing.T) {
 	}
 	if err := r.ReconcileOnce(context.Background(), 10); err == nil {
 		t.Fatal("expected error when group lookup fails")
+	}
+}
+
+// TestReconcile_EpisodeNameMatchesSeederHelper locks the cross-producer
+// naming agreement: the reconciler must use the exact same episode name
+// that the seeder would build for the same (target_ref, id). If this
+// assertion drifts, Graphiti will see two different episodes for one
+// logical finding and produce duplicate edges on every retry.
+func TestReconcile_EpisodeNameMatchesSeederHelper(t *testing.T) {
+	row := database.Finding{ID: 99, EngagementID: 7, TargetRef: "ip:10.0.0.9:22/tcp"}
+	client := &fakeClient{}
+	r := &Reconciler{
+		Repo:        &fakeRepo{pending: []database.Finding{row}},
+		GroupLookup: fakeEngagementLookup{group: "eng-x"},
+		Client:      client,
+	}
+	if err := r.ReconcileOnce(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.calls) != 1 {
+		t.Fatalf("want 1 graphiti call, got %d", len(client.calls))
+	}
+	got := client.calls[0].Messages[0].Name
+	want := findingEpisodeName(row.TargetRef, row.ID)
+	if got != want {
+		t.Fatalf("reconciler emitted episode name %q; seeder helper wants %q", got, want)
 	}
 }

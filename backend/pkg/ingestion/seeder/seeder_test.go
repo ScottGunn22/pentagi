@@ -2,10 +2,11 @@ package seeder
 
 import (
 	"context"
-	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"pentagi/pkg/database"
 	"pentagi/pkg/graphiti"
 	"pentagi/pkg/ingestion/schema"
 )
@@ -21,26 +22,22 @@ func TestSeeder_HappyPath(t *testing.T) {
 	c := &fakeClient{}
 	s := NewSeeder(c)
 
-	raw, _ := json.Marshal(map[string]string{"source": "nmap"})
 	now := time.Now()
-	bundle := &schema.ReportBundle{
+	in := SeedInput{
 		SourceType: schema.SourceNmap,
 		ScanDate:   &now,
 		Hosts: []schema.Host{{IP: "10.1.2.3", Services: []schema.Service{
 			{Port: 443, Protocol: "tcp", Name: "https", Product: "nginx", Version: "1.24"},
 		}}},
-		Findings: []schema.Finding{{
-			Type:       schema.TypeVulnerability,
-			CVE:        "CVE-2024-1234",
-			Target:     schema.TargetRef{Kind: schema.TargetHost, Ref: "ip:10.1.2.3:443/tcp"},
-			Title:      "Demo",
-			Severity:   schema.SeverityHigh,
-			Confidence: schema.ConfidenceCertain,
+		Findings: []database.Finding{{
+			ID:           42,
+			EngagementID: 7,
+			TargetRef:    "ip:10.1.2.3:443/tcp",
+			Title:        "Demo",
 		}},
-		RawEvidence: raw,
 	}
 
-	if err := s.Seed(context.Background(), bundle, "eng-abc"); err != nil {
+	if err := s.Seed(context.Background(), in, "eng-abc"); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.calls) == 0 {
@@ -56,13 +53,14 @@ func TestSeeder_HappyPath(t *testing.T) {
 	}
 
 	// Check host and finding episodes present.
+	wantFinding := findingEpisodeName("ip:10.1.2.3:443/tcp", 42)
 	var sawHost, sawFinding bool
 	for _, call := range c.calls {
 		for _, m := range call.Messages {
-			switch {
-			case m.Name == "host:10.1.2.3":
+			switch m.Name {
+			case "host:10.1.2.3":
 				sawHost = true
-			case m.Name == "finding:ip:10.1.2.3:443/tcp:CVE-2024-1234":
+			case wantFinding:
 				sawFinding = true
 			}
 		}
@@ -71,14 +69,44 @@ func TestSeeder_HappyPath(t *testing.T) {
 		t.Fatal("expected host episode")
 	}
 	if !sawFinding {
-		t.Fatal("expected finding episode with CVE-derived name")
+		t.Fatalf("expected finding episode %q", wantFinding)
 	}
 }
 
 func TestSeeder_RequiresGroupID(t *testing.T) {
 	s := NewSeeder(&fakeClient{})
-	err := s.Seed(context.Background(), &schema.ReportBundle{}, "")
+	err := s.Seed(context.Background(), SeedInput{}, "")
 	if err == nil {
 		t.Fatal("expected error on empty groupID")
+	}
+}
+
+func TestSeeder_SkipsFindingsWithEmptyTargetRef(t *testing.T) {
+	c := &fakeClient{}
+	s := NewSeeder(c)
+
+	in := SeedInput{
+		Findings: []database.Finding{
+			{ID: 1, EngagementID: 10, TargetRef: ""},                        // must be skipped
+			{ID: 2, EngagementID: 10, TargetRef: "ip:10.0.0.2:80/tcp"},      // must be written
+		},
+	}
+
+	err := s.Seed(context.Background(), in, "eng-xyz")
+	if err == nil {
+		t.Fatal("expected aggregated error for finding with empty target_ref")
+	}
+	if !strings.Contains(err.Error(), "empty target_ref") {
+		t.Fatalf("error should mention empty target_ref: %v", err)
+	}
+
+	// Only the finding with a target_ref should have been written.
+	if len(c.calls) != 1 {
+		t.Fatalf("want exactly 1 graphiti call, got %d", len(c.calls))
+	}
+	want := findingEpisodeName("ip:10.0.0.2:80/tcp", 2)
+	got := c.calls[0].Messages[0].Name
+	if got != want {
+		t.Fatalf("wrong episode name: got %q want %q", got, want)
 	}
 }

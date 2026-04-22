@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/sirupsen/logrus"
+
 	"pentagi/pkg/database"
 	"pentagi/pkg/graphiti"
 )
@@ -25,16 +27,24 @@ type GroupLookup interface {
 
 // Reconciler retries Graphiti writes for findings whose initial seed
 // at ingest-time failed (graph_seeded_at IS NULL).
+//
+// Logger is optional: when non-nil the reconciler emits a Warn entry for
+// every per-finding AddMessages failure so operators have a signal that
+// Graphiti is misbehaving. Call sites should normally supply one; the
+// nil-guarded call path is kept so unit tests can construct a bare
+// Reconciler literal without plumbing a logger through.
 type Reconciler struct {
 	Repo        FindingRepo
 	GroupLookup GroupLookup
 	Client      EpisodeWriter
+	Logger      *logrus.Entry
 }
 
 // ReconcileOnce processes up to `limit` pending findings. Findings whose
-// AddMessages call fails are left unmarked so a future tick retries them.
-// Returns an error only on a hard repo/lookup failure that prevents
-// further progress — per-finding write failures are tolerated.
+// AddMessages call fails are left unmarked so a future tick retries them;
+// the failure is logged (if Logger is set) but does not surface as an
+// error from ReconcileOnce. Only hard repo/lookup failures that prevent
+// further progress are returned.
 func (r *Reconciler) ReconcileOnce(ctx context.Context, limit int64) error {
 	rows, err := r.Repo.FindingsPendingGraphSync(ctx, limit)
 	if err != nil {
@@ -46,7 +56,7 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context, limit int64) error {
 			return fmt.Errorf("reconciler: group for finding %d: %w", row.ID, err)
 		}
 		body, _ := json.Marshal(row)
-		name := fmt.Sprintf("finding:%s:%d", row.TargetRef, row.ID)
+		name := findingEpisodeName(row.TargetRef, row.ID)
 		req := graphiti.AddMessagesRequest{
 			GroupID: grp,
 			Messages: []graphiti.Message{{
@@ -58,6 +68,13 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context, limit int64) error {
 			}},
 		}
 		if err := r.Client.AddMessages(ctx, req); err != nil {
+			if r.Logger != nil {
+				r.Logger.WithFields(logrus.Fields{
+					"finding_id":    row.ID,
+					"engagement_id": row.EngagementID,
+					"target_ref":    row.TargetRef,
+				}).WithError(err).Warn("graphiti seed retry failed; will retry next tick")
+			}
 			continue // leave unseeded; next tick retries
 		}
 		if err := r.Repo.MarkFindingGraphSeeded(ctx, row.ID); err != nil {
