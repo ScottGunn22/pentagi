@@ -11,11 +11,14 @@ import (
 
 type Querier interface {
 	AddFavoriteFlow(ctx context.Context, arg AddFavoriteFlowParams) (UserPreference, error)
+	AddScopeRule(ctx context.Context, arg AddScopeRuleParams) (EngagementScopeRule, error)
+	AttachFindingSource(ctx context.Context, arg AttachFindingSourceParams) error
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
 	CreateAgentLog(ctx context.Context, arg CreateAgentLogParams) (Agentlog, error)
 	CreateAssistant(ctx context.Context, arg CreateAssistantParams) (Assistant, error)
 	CreateAssistantLog(ctx context.Context, arg CreateAssistantLogParams) (Assistantlog, error)
 	CreateContainer(ctx context.Context, arg CreateContainerParams) (Container, error)
+	CreateEngagement(ctx context.Context, arg CreateEngagementParams) (Engagement, error)
 	CreateFlow(ctx context.Context, arg CreateFlowParams) (Flow, error)
 	CreateFlowTemplate(ctx context.Context, arg CreateFlowTemplateParams) (FlowTemplate, error)
 	CreateMsgChain(ctx context.Context, arg CreateMsgChainParams) (Msgchain, error)
@@ -23,6 +26,7 @@ type Querier interface {
 	CreateProvider(ctx context.Context, arg CreateProviderParams) (Provider, error)
 	CreateResultAssistantLog(ctx context.Context, arg CreateResultAssistantLogParams) (Assistantlog, error)
 	CreateResultMsgLog(ctx context.Context, arg CreateResultMsgLogParams) (Msglog, error)
+	CreateScanReport(ctx context.Context, arg CreateScanReportParams) (ScanReport, error)
 	CreateScreenshot(ctx context.Context, arg CreateScreenshotParams) (Screenshot, error)
 	CreateSearchLog(ctx context.Context, arg CreateSearchLogParams) (Searchlog, error)
 	CreateSubtask(ctx context.Context, arg CreateSubtaskParams) (Subtask, error)
@@ -41,6 +45,7 @@ type Querier interface {
 	DeleteFlowTemplate(ctx context.Context, arg DeleteFlowTemplateParams) error
 	DeletePrompt(ctx context.Context, id int64) error
 	DeleteProvider(ctx context.Context, id int64) (Provider, error)
+	DeleteScopeRule(ctx context.Context, arg DeleteScopeRuleParams) error
 	DeleteSubtask(ctx context.Context, id int64) error
 	DeleteSubtasks(ctx context.Context, ids []int64) error
 	DeleteUser(ctx context.Context, id int64) error
@@ -49,6 +54,9 @@ type Querier interface {
 	DeleteUserPreferences(ctx context.Context, userID int64) error
 	DeleteUserPrompt(ctx context.Context, arg DeleteUserPromptParams) error
 	DeleteUserProvider(ctx context.Context, arg DeleteUserProviderParams) (Provider, error)
+	EngagementFindingStats(ctx context.Context, engagementID int64) (EngagementFindingStatsRow, error)
+	FindingsByTargetKind(ctx context.Context, arg FindingsByTargetKindParams) ([]Finding, error)
+	FindingsPendingGraphSync(ctx context.Context, limit int64) ([]Finding, error)
 	GetAPIToken(ctx context.Context, id int64) (ApiToken, error)
 	GetAPITokenByTokenID(ctx context.Context, tokenID string) (ApiToken, error)
 	GetAPITokens(ctx context.Context) ([]ApiToken, error)
@@ -62,6 +70,8 @@ type Querier interface {
 	GetCallToolcall(ctx context.Context, callID string) (Toolcall, error)
 	GetContainerTermLogs(ctx context.Context, containerID int64) ([]Termlog, error)
 	GetContainers(ctx context.Context) ([]Container, error)
+	GetEngagement(ctx context.Context, id int64) (Engagement, error)
+	GetFinding(ctx context.Context, id int64) (Finding, error)
 	GetFlow(ctx context.Context, id int64) (Flow, error)
 	GetFlowAgentLog(ctx context.Context, arg GetFlowAgentLogParams) (Agentlog, error)
 	GetFlowAgentLogs(ctx context.Context, flowID int64) ([]Agentlog, error)
@@ -119,6 +129,8 @@ type Querier interface {
 	GetRoleByName(ctx context.Context, name string) (GetRoleByNameRow, error)
 	GetRoles(ctx context.Context) ([]GetRolesRow, error)
 	GetRunningContainers(ctx context.Context) ([]Container, error)
+	GetScanReport(ctx context.Context, id int64) (ScanReport, error)
+	GetScanReportBySha(ctx context.Context, arg GetScanReportByShaParams) (ScanReport, error)
 	GetScreenshot(ctx context.Context, id int64) (Screenshot, error)
 	GetSubtask(ctx context.Context, id int64) (Subtask, error)
 	GetSubtaskAgentLogs(ctx context.Context, subtaskID sql.NullInt64) ([]Agentlog, error)
@@ -211,6 +223,13 @@ type Querier interface {
 	GetUserTotalToolcallsStats(ctx context.Context, userID int64) (GetUserTotalToolcallsStatsRow, error)
 	GetUserTotalUsageStats(ctx context.Context, userID int64) (GetUserTotalUsageStatsRow, error)
 	GetUsers(ctx context.Context) ([]GetUsersRow, error)
+	ListEngagements(ctx context.Context, arg ListEngagementsParams) ([]Engagement, error)
+	ListFindings(ctx context.Context, arg ListFindingsParams) ([]Finding, error)
+	ListScanReports(ctx context.Context, arg ListScanReportsParams) ([]ScanReport, error)
+	ListScopeRules(ctx context.Context, engagementID int64) ([]EngagementScopeRule, error)
+	MarkFindingGraphSeeded(ctx context.Context, id int64) error
+	SoftDeleteEngagement(ctx context.Context, id int64) error
+	TopFindingsByCVSS(ctx context.Context, arg TopFindingsByCVSSParams) ([]Finding, error)
 	UpdateAPIToken(ctx context.Context, arg UpdateAPITokenParams) (ApiToken, error)
 	UpdateAssistant(ctx context.Context, arg UpdateAssistantParams) (Assistant, error)
 	UpdateAssistantLanguage(ctx context.Context, arg UpdateAssistantLanguageParams) (Assistant, error)
@@ -225,6 +244,8 @@ type Querier interface {
 	UpdateContainerImage(ctx context.Context, arg UpdateContainerImageParams) (Container, error)
 	UpdateContainerStatus(ctx context.Context, arg UpdateContainerStatusParams) (Container, error)
 	UpdateContainerStatusLocalID(ctx context.Context, arg UpdateContainerStatusLocalIDParams) (Container, error)
+	UpdateEngagement(ctx context.Context, arg UpdateEngagementParams) (Engagement, error)
+	UpdateFindingVerification(ctx context.Context, arg UpdateFindingVerificationParams) (Finding, error)
 	UpdateFlow(ctx context.Context, arg UpdateFlowParams) (Flow, error)
 	UpdateFlowLanguage(ctx context.Context, arg UpdateFlowLanguageParams) (Flow, error)
 	UpdateFlowProvider(ctx context.Context, arg UpdateFlowProviderParams) (Flow, error)
@@ -237,6 +258,7 @@ type Querier interface {
 	UpdateMsgLogResult(ctx context.Context, arg UpdateMsgLogResultParams) (Msglog, error)
 	UpdatePrompt(ctx context.Context, arg UpdatePromptParams) (Prompt, error)
 	UpdateProvider(ctx context.Context, arg UpdateProviderParams) (Provider, error)
+	UpdateScanReportStatus(ctx context.Context, arg UpdateScanReportStatusParams) error
 	UpdateSubtaskContext(ctx context.Context, arg UpdateSubtaskContextParams) (Subtask, error)
 	UpdateSubtaskFailedResult(ctx context.Context, arg UpdateSubtaskFailedResultParams) (Subtask, error)
 	UpdateSubtaskFinishedResult(ctx context.Context, arg UpdateSubtaskFinishedResultParams) (Subtask, error)
@@ -259,6 +281,7 @@ type Querier interface {
 	UpdateUserProvider(ctx context.Context, arg UpdateUserProviderParams) (Provider, error)
 	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) (User, error)
 	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) (User, error)
+	UpsertFinding(ctx context.Context, arg UpsertFindingParams) (UpsertFindingRow, error)
 	UpsertUserPreferences(ctx context.Context, arg UpsertUserPreferencesParams) (UserPreference, error)
 }
 
