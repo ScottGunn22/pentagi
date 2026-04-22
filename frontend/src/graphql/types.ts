@@ -216,6 +216,12 @@ export type CreateApiTokenInput = {
     ttl: Scalars['Int']['input'];
 };
 
+export type CreateEngagementInput = {
+    client: Scalars['String']['input'];
+    description?: InputMaybe<Scalars['String']['input']>;
+    name: Scalars['String']['input'];
+};
+
 export type CreateFlowTemplateInput = {
     text: Scalars['String']['input'];
     title: Scalars['String']['input'];
@@ -260,6 +266,77 @@ export type DefaultProvidersConfig = {
     qwen?: Maybe<ProviderConfig>;
 };
 
+/** Diff state for a finding within a retest_diff flow. */
+export enum DiffState {
+    Fixed = 'FIXED',
+    New = 'NEW',
+    Persistent = 'PERSISTENT',
+    Regressed = 'REGRESSED',
+}
+
+/** An Engagement groups scanner data, findings, and pentest flows under one SOW. */
+export type Engagement = {
+    client: Scalars['String']['output'];
+    createdAt: Scalars['Time']['output'];
+    description?: Maybe<Scalars['String']['output']>;
+    findingStats: FindingStats;
+    /** Recent findings (severity-ranked then by CVSS); use the REST API for paged access. */
+    findings: Array<Finding>;
+    id: Scalars['ID']['output'];
+    name: Scalars['String']['output'];
+    scanReports: Array<ScanReport>;
+    scopeRules: Array<ScopeRule>;
+    status: EngagementStatus;
+    updatedAt: Scalars['Time']['output'];
+};
+
+/** An Engagement groups scanner data, findings, and pentest flows under one SOW. */
+export type EngagementFindingsArgs = {
+    limit?: InputMaybe<Scalars['Int']['input']>;
+};
+
+/** Engagement status. */
+export enum EngagementStatus {
+    Active = 'ACTIVE',
+    Archived = 'ARCHIVED',
+    Completed = 'COMPLETED',
+    OnHold = 'ON_HOLD',
+}
+
+export type Finding = {
+    confidence: FindingConfidence;
+    cve?: Maybe<Scalars['String']['output']>;
+    cvssScore?: Maybe<Scalars['Float']['output']>;
+    evidence: Scalars['String']['output'];
+    firstSeenAt: Scalars['Time']['output'];
+    id: Scalars['ID']['output'];
+    inScope: Scalars['Boolean']['output'];
+    lastSeenAt: Scalars['Time']['output'];
+    severity: SeverityLevel;
+    /** Source-trust chain — the same logical finding can be evidenced by N reports. */
+    sources: Array<ScanReport>;
+    target: Target;
+    title: Scalars['String']['output'];
+    verificationStatus: VerificationStatus;
+};
+
+/** Scanner-reported confidence. */
+export enum FindingConfidence {
+    Certain = 'CERTAIN',
+    Firm = 'FIRM',
+    Tentative = 'TENTATIVE',
+}
+
+export type FindingStats = {
+    confirmed: Scalars['Int']['output'];
+    critical: Scalars['Int']['output'];
+    high: Scalars['Int']['output'];
+    info: Scalars['Int']['output'];
+    low: Scalars['Int']['output'];
+    medium: Scalars['Int']['output'];
+    outOfScope: Scalars['Int']['output'];
+};
+
 export type Flow = {
     createdAt: Scalars['Time']['output'];
     id: Scalars['ID']['output'];
@@ -298,6 +375,13 @@ export type FlowTemplate = {
     updatedAt: Scalars['Time']['output'];
     userId: Scalars['ID']['output'];
 };
+
+/** Pentest flow type — extends the existing Flow concept. */
+export enum FlowType {
+    NewTest = 'NEW_TEST',
+    RetestDiff = 'RETEST_DIFF',
+    TargetedReverify = 'TARGETED_REVERIFY',
+}
 
 export type FlowsStats = {
     totalAssistantsCount: Scalars['Int']['output'];
@@ -371,9 +455,11 @@ export type ModelUsageStats = {
 
 export type Mutation = {
     addFavoriteFlow: ResultType;
+    addScopeRule: ScopeRule;
     callAssistant: ResultType;
     createAPIToken: ApiTokenWithSecret;
     createAssistant: FlowAssistant;
+    createEngagement: Engagement;
     createFlow: Flow;
     createFlowTemplate: FlowTemplate;
     createPrompt: UserPrompt;
@@ -385,6 +471,7 @@ export type Mutation = {
     deleteFlowTemplate: ResultType;
     deletePrompt: ResultType;
     deleteProvider: ResultType;
+    deleteScopeRule: Scalars['Boolean']['output'];
     finishFlow: ResultType;
     putUserInput: ResultType;
     renameFlow: ResultType;
@@ -397,10 +484,16 @@ export type Mutation = {
     updatePrompt: UserPrompt;
     updateProvider: ProviderConfig;
     validatePrompt: PromptValidationResult;
+    verifyFinding: Finding;
 };
 
 export type MutationAddFavoriteFlowArgs = {
     flowId: Scalars['ID']['input'];
+};
+
+export type MutationAddScopeRuleArgs = {
+    engagementId: Scalars['ID']['input'];
+    input: ScopeRuleInput;
 };
 
 export type MutationCallAssistantArgs = {
@@ -419,6 +512,10 @@ export type MutationCreateAssistantArgs = {
     input: Scalars['String']['input'];
     modelProvider: Scalars['String']['input'];
     useAgents: Scalars['Boolean']['input'];
+};
+
+export type MutationCreateEngagementArgs = {
+    input: CreateEngagementInput;
 };
 
 export type MutationCreateFlowArgs = {
@@ -468,6 +565,10 @@ export type MutationDeletePromptArgs = {
 
 export type MutationDeleteProviderArgs = {
     providerId: Scalars['ID']['input'];
+};
+
+export type MutationDeleteScopeRuleArgs = {
+    id: Scalars['ID']['input'];
 };
 
 export type MutationFinishFlowArgs = {
@@ -530,6 +631,20 @@ export type MutationValidatePromptArgs = {
     template: Scalars['String']['input'];
     type: PromptType;
 };
+
+export type MutationVerifyFindingArgs = {
+    id: Scalars['ID']['input'];
+    input: VerifyFindingInput;
+};
+
+/** Status of a scanner-report parse job. */
+export enum ParseStatus {
+    Failed = 'FAILED',
+    Parsing = 'PARSING',
+    Partial = 'PARTIAL',
+    Pending = 'PENDING',
+    Succeeded = 'SUCCEEDED',
+}
 
 export enum PromptType {
     Adviser = 'adviser',
@@ -682,6 +797,8 @@ export type Query = {
     apiTokens: Array<ApiToken>;
     assistantLogs?: Maybe<Array<AssistantLog>>;
     assistants?: Maybe<Array<Assistant>>;
+    engagement?: Maybe<Engagement>;
+    engagements: Array<Engagement>;
     flow: Flow;
     flowStatsByFlow: FlowStats;
     flowTemplate?: Maybe<FlowTemplate>;
@@ -730,6 +847,15 @@ export type QueryAssistantLogsArgs = {
 
 export type QueryAssistantsArgs = {
     flowId: Scalars['ID']['input'];
+};
+
+export type QueryEngagementArgs = {
+    id: Scalars['ID']['input'];
+};
+
+export type QueryEngagementsArgs = {
+    limit?: InputMaybe<Scalars['Int']['input']>;
+    offset?: InputMaybe<Scalars['Int']['input']>;
 };
 
 export type QueryFlowArgs = {
@@ -827,6 +953,57 @@ export enum ResultType {
     Success = 'success',
 }
 
+export type ScanReport = {
+    findingCount: Scalars['Int']['output'];
+    id: Scalars['ID']['output'];
+    ingestedAt: Scalars['Time']['output'];
+    originalFilename: Scalars['String']['output'];
+    parseError?: Maybe<Scalars['String']['output']>;
+    parseStatus: ParseStatus;
+    scanDate?: Maybe<Scalars['Time']['output']>;
+    sourceType: ScanSourceType;
+};
+
+/** Scanner source for an ingested report. */
+export enum ScanSourceType {
+    Burp = 'BURP',
+    Nmap = 'NMAP',
+    Qualys = 'QUALYS',
+    Twistlock = 'TWISTLOCK',
+}
+
+/** Scope rule direction. */
+export enum ScopeDirection {
+    Exclude = 'EXCLUDE',
+    Include = 'INCLUDE',
+}
+
+export type ScopeRule = {
+    direction: ScopeDirection;
+    id: Scalars['ID']['output'];
+    note?: Maybe<Scalars['String']['output']>;
+    ruleType: ScopeRuleType;
+    value: Scalars['String']['output'];
+};
+
+export type ScopeRuleInput = {
+    direction?: InputMaybe<ScopeDirection>;
+    note?: InputMaybe<Scalars['String']['input']>;
+    ruleType: ScopeRuleType;
+    value: Scalars['String']['input'];
+};
+
+/** Scope rule type. */
+export enum ScopeRuleType {
+    Cidr = 'CIDR',
+    ContainerImage = 'CONTAINER_IMAGE',
+    ContainerRegistry = 'CONTAINER_REGISTRY',
+    Domain = 'DOMAIN',
+    DomainGlob = 'DOMAIN_GLOB',
+    Ip = 'IP',
+    UrlPrefix = 'URL_PREFIX',
+}
+
 export type Screenshot = {
     createdAt: Scalars['Time']['output'];
     flowId: Scalars['ID']['output'];
@@ -857,6 +1034,15 @@ export type Settings = {
     dockerInside: Scalars['Boolean']['output'];
 };
 
+/** Severity of a finding. */
+export enum SeverityLevel {
+    Critical = 'CRITICAL',
+    High = 'HIGH',
+    Info = 'INFO',
+    Low = 'LOW',
+    Medium = 'MEDIUM',
+}
+
 export enum StatusType {
     Created = 'created',
     Failed = 'failed',
@@ -875,6 +1061,8 @@ export type Subscription = {
     assistantLogAdded: AssistantLog;
     assistantLogUpdated: AssistantLog;
     assistantUpdated: Assistant;
+    /** Fires whenever a finding is upserted or its verification changes. */
+    findingsUpdated: Finding;
     flowCreated: Flow;
     flowDeleted: Flow;
     flowTemplateCreated: FlowTemplate;
@@ -886,6 +1074,8 @@ export type Subscription = {
     providerCreated: ProviderConfig;
     providerDeleted: ProviderConfig;
     providerUpdated: ProviderConfig;
+    /** Fires whenever a scan report transitions parse_status. */
+    reportIngested: ScanReport;
     screenshotAdded: Screenshot;
     searchLogAdded: SearchLog;
     settingsUserUpdated: UserPreferences;
@@ -919,12 +1109,20 @@ export type SubscriptionAssistantUpdatedArgs = {
     flowId: Scalars['ID']['input'];
 };
 
+export type SubscriptionFindingsUpdatedArgs = {
+    engagementId: Scalars['ID']['input'];
+};
+
 export type SubscriptionMessageLogAddedArgs = {
     flowId: Scalars['ID']['input'];
 };
 
 export type SubscriptionMessageLogUpdatedArgs = {
     flowId: Scalars['ID']['input'];
+};
+
+export type SubscriptionReportIngestedArgs = {
+    engagementId: Scalars['ID']['input'];
 };
 
 export type SubscriptionScreenshotAddedArgs = {
@@ -968,6 +1166,19 @@ export type SubtaskExecutionStats = {
     totalDurationSeconds: Scalars['Float']['output'];
     totalToolcallsCount: Scalars['Int']['output'];
 };
+
+/** Discriminator + opaque target reference (e.g. ip:10.1.2.3:443/tcp). */
+export type Target = {
+    kind: TargetKind;
+    ref: Scalars['String']['output'];
+};
+
+/** Target kind for a finding. */
+export enum TargetKind {
+    Container = 'CONTAINER',
+    Host = 'HOST',
+    WebEndpoint = 'WEB_ENDPOINT',
+}
 
 export type Task = {
     createdAt: Scalars['Time']['output'];
@@ -1111,6 +1322,20 @@ export type VectorStoreLog = {
     result: Scalars['String']['output'];
     subtaskId?: Maybe<Scalars['ID']['output']>;
     taskId?: Maybe<Scalars['ID']['output']>;
+};
+
+/** Verification state of a finding (set by an agent or pentester). */
+export enum VerificationStatus {
+    Confirmed = 'CONFIRMED',
+    FalsePositive = 'FALSE_POSITIVE',
+    NotExploitable = 'NOT_EXPLOITABLE',
+    Unverified = 'UNVERIFIED',
+    Verifying = 'VERIFYING',
+}
+
+export type VerifyFindingInput = {
+    notes?: InputMaybe<Scalars['String']['input']>;
+    verificationStatus: VerificationStatus;
 };
 
 export type SettingsFragmentFragment = {
@@ -2037,6 +2262,109 @@ export type FlowTemplateDeletedSubscriptionVariables = Exact<{ [key: string]: ne
 
 export type FlowTemplateDeletedSubscription = { flowTemplateDeleted: FlowTemplateFragmentFragment };
 
+export type FindingStatsFragmentFragment = {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+    outOfScope: number;
+    confirmed: number;
+};
+
+export type ScopeRuleFragmentFragment = {
+    id: string;
+    ruleType: ScopeRuleType;
+    value: string;
+    direction: ScopeDirection;
+    note?: string | null;
+};
+
+export type ScanReportFragmentFragment = {
+    id: string;
+    sourceType: ScanSourceType;
+    originalFilename: string;
+    scanDate?: any | null;
+    parseStatus: ParseStatus;
+    parseError?: string | null;
+    findingCount: number;
+    ingestedAt: any;
+};
+
+export type FindingFragmentFragment = {
+    id: string;
+    title: string;
+    severity: SeverityLevel;
+    confidence: FindingConfidence;
+    cve?: string | null;
+    cvssScore?: number | null;
+    inScope: boolean;
+    verificationStatus: VerificationStatus;
+    firstSeenAt: any;
+    lastSeenAt: any;
+    target: { kind: TargetKind; ref: string };
+};
+
+export type EngagementListItemFragmentFragment = {
+    id: string;
+    name: string;
+    client: string;
+    status: EngagementStatus;
+    updatedAt: any;
+    findingStats: FindingStatsFragmentFragment;
+};
+
+export type EngagementDetailFragmentFragment = {
+    id: string;
+    name: string;
+    client: string;
+    description?: string | null;
+    status: EngagementStatus;
+    createdAt: any;
+    updatedAt: any;
+    scopeRules: Array<ScopeRuleFragmentFragment>;
+    scanReports: Array<ScanReportFragmentFragment>;
+    findingStats: FindingStatsFragmentFragment;
+};
+
+export type EngagementsQueryVariables = Exact<{ [key: string]: never }>;
+
+export type EngagementsQuery = { engagements: Array<EngagementListItemFragmentFragment> };
+
+export type EngagementQueryVariables = Exact<{
+    id: Scalars['ID']['input'];
+}>;
+
+export type EngagementQuery = {
+    engagement?: ({ findings: Array<FindingFragmentFragment> } & EngagementDetailFragmentFragment) | null;
+};
+
+export type CreateEngagementMutationVariables = Exact<{
+    input: CreateEngagementInput;
+}>;
+
+export type CreateEngagementMutation = { createEngagement: { id: string; name: string; client: string } };
+
+export type AddScopeRuleMutationVariables = Exact<{
+    engagementId: Scalars['ID']['input'];
+    input: ScopeRuleInput;
+}>;
+
+export type AddScopeRuleMutation = { addScopeRule: ScopeRuleFragmentFragment };
+
+export type DeleteScopeRuleMutationVariables = Exact<{
+    id: Scalars['ID']['input'];
+}>;
+
+export type DeleteScopeRuleMutation = { deleteScopeRule: boolean };
+
+export type VerifyFindingMutationVariables = Exact<{
+    id: Scalars['ID']['input'];
+    input: VerifyFindingInput;
+}>;
+
+export type VerifyFindingMutation = { verifyFinding: { id: string; verificationStatus: VerificationStatus } };
+
 export const SettingsFragmentFragmentDoc = gql`
     fragment settingsFragment on Settings {
         debug
@@ -2564,6 +2892,92 @@ export const UserPreferencesFragmentFragmentDoc = gql`
         id
         favoriteFlows
     }
+`;
+export const FindingFragmentFragmentDoc = gql`
+    fragment findingFragment on Finding {
+        id
+        title
+        severity
+        confidence
+        cve
+        cvssScore
+        target {
+            kind
+            ref
+        }
+        inScope
+        verificationStatus
+        firstSeenAt
+        lastSeenAt
+    }
+`;
+export const FindingStatsFragmentFragmentDoc = gql`
+    fragment findingStatsFragment on FindingStats {
+        critical
+        high
+        medium
+        low
+        info
+        outOfScope
+        confirmed
+    }
+`;
+export const EngagementListItemFragmentFragmentDoc = gql`
+    fragment engagementListItemFragment on Engagement {
+        id
+        name
+        client
+        status
+        findingStats {
+            ...findingStatsFragment
+        }
+        updatedAt
+    }
+    ${FindingStatsFragmentFragmentDoc}
+`;
+export const ScopeRuleFragmentFragmentDoc = gql`
+    fragment scopeRuleFragment on ScopeRule {
+        id
+        ruleType
+        value
+        direction
+        note
+    }
+`;
+export const ScanReportFragmentFragmentDoc = gql`
+    fragment scanReportFragment on ScanReport {
+        id
+        sourceType
+        originalFilename
+        scanDate
+        parseStatus
+        parseError
+        findingCount
+        ingestedAt
+    }
+`;
+export const EngagementDetailFragmentFragmentDoc = gql`
+    fragment engagementDetailFragment on Engagement {
+        id
+        name
+        client
+        description
+        status
+        scopeRules {
+            ...scopeRuleFragment
+        }
+        scanReports {
+            ...scanReportFragment
+        }
+        findingStats {
+            ...findingStatsFragment
+        }
+        createdAt
+        updatedAt
+    }
+    ${ScopeRuleFragmentFragmentDoc}
+    ${ScanReportFragmentFragmentDoc}
+    ${FindingStatsFragmentFragmentDoc}
 `;
 export const FlowsDocument = gql`
     query flows {
@@ -6849,3 +7263,283 @@ export function useFlowTemplateDeletedSubscription(
 }
 export type FlowTemplateDeletedSubscriptionHookResult = ReturnType<typeof useFlowTemplateDeletedSubscription>;
 export type FlowTemplateDeletedSubscriptionResult = Apollo.SubscriptionResult<FlowTemplateDeletedSubscription>;
+export const EngagementsDocument = gql`
+    query engagements {
+        engagements {
+            ...engagementListItemFragment
+        }
+    }
+    ${EngagementListItemFragmentFragmentDoc}
+`;
+
+/**
+ * __useEngagementsQuery__
+ *
+ * To run a query within a React component, call `useEngagementsQuery` and pass it any options that fit your needs.
+ * When your component renders, `useEngagementsQuery` returns an object from Apollo Client that contains loading, error, and data properties
+ * you can use to render your UI.
+ *
+ * @param baseOptions options that will be passed into the query, supported options are listed on: https://www.apollographql.com/docs/react/api/react-hooks/#options;
+ *
+ * @example
+ * const { data, loading, error } = useEngagementsQuery({
+ *   variables: {
+ *   },
+ * });
+ */
+export function useEngagementsQuery(
+    baseOptions?: Apollo.QueryHookOptions<EngagementsQuery, EngagementsQueryVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useQuery<EngagementsQuery, EngagementsQueryVariables>(EngagementsDocument, options);
+}
+export function useEngagementsLazyQuery(
+    baseOptions?: Apollo.LazyQueryHookOptions<EngagementsQuery, EngagementsQueryVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useLazyQuery<EngagementsQuery, EngagementsQueryVariables>(EngagementsDocument, options);
+}
+// @ts-ignore
+export function useEngagementsSuspenseQuery(
+    baseOptions?: Apollo.SuspenseQueryHookOptions<EngagementsQuery, EngagementsQueryVariables>,
+): Apollo.UseSuspenseQueryResult<EngagementsQuery, EngagementsQueryVariables>;
+export function useEngagementsSuspenseQuery(
+    baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<EngagementsQuery, EngagementsQueryVariables>,
+): Apollo.UseSuspenseQueryResult<EngagementsQuery | undefined, EngagementsQueryVariables>;
+export function useEngagementsSuspenseQuery(
+    baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<EngagementsQuery, EngagementsQueryVariables>,
+) {
+    const options = baseOptions === Apollo.skipToken ? baseOptions : { ...defaultOptions, ...baseOptions };
+    return Apollo.useSuspenseQuery<EngagementsQuery, EngagementsQueryVariables>(EngagementsDocument, options);
+}
+export type EngagementsQueryHookResult = ReturnType<typeof useEngagementsQuery>;
+export type EngagementsLazyQueryHookResult = ReturnType<typeof useEngagementsLazyQuery>;
+export type EngagementsSuspenseQueryHookResult = ReturnType<typeof useEngagementsSuspenseQuery>;
+export type EngagementsQueryResult = Apollo.QueryResult<EngagementsQuery, EngagementsQueryVariables>;
+export const EngagementDocument = gql`
+    query engagement($id: ID!) {
+        engagement(id: $id) {
+            ...engagementDetailFragment
+            findings(limit: 200) {
+                ...findingFragment
+            }
+        }
+    }
+    ${EngagementDetailFragmentFragmentDoc}
+    ${FindingFragmentFragmentDoc}
+`;
+
+/**
+ * __useEngagementQuery__
+ *
+ * To run a query within a React component, call `useEngagementQuery` and pass it any options that fit your needs.
+ * When your component renders, `useEngagementQuery` returns an object from Apollo Client that contains loading, error, and data properties
+ * you can use to render your UI.
+ *
+ * @param baseOptions options that will be passed into the query, supported options are listed on: https://www.apollographql.com/docs/react/api/react-hooks/#options;
+ *
+ * @example
+ * const { data, loading, error } = useEngagementQuery({
+ *   variables: {
+ *      id: // value for 'id'
+ *   },
+ * });
+ */
+export function useEngagementQuery(
+    baseOptions: Apollo.QueryHookOptions<EngagementQuery, EngagementQueryVariables> &
+        ({ variables: EngagementQueryVariables; skip?: boolean } | { skip: boolean }),
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useQuery<EngagementQuery, EngagementQueryVariables>(EngagementDocument, options);
+}
+export function useEngagementLazyQuery(
+    baseOptions?: Apollo.LazyQueryHookOptions<EngagementQuery, EngagementQueryVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useLazyQuery<EngagementQuery, EngagementQueryVariables>(EngagementDocument, options);
+}
+// @ts-ignore
+export function useEngagementSuspenseQuery(
+    baseOptions?: Apollo.SuspenseQueryHookOptions<EngagementQuery, EngagementQueryVariables>,
+): Apollo.UseSuspenseQueryResult<EngagementQuery, EngagementQueryVariables>;
+export function useEngagementSuspenseQuery(
+    baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<EngagementQuery, EngagementQueryVariables>,
+): Apollo.UseSuspenseQueryResult<EngagementQuery | undefined, EngagementQueryVariables>;
+export function useEngagementSuspenseQuery(
+    baseOptions?: Apollo.SkipToken | Apollo.SuspenseQueryHookOptions<EngagementQuery, EngagementQueryVariables>,
+) {
+    const options = baseOptions === Apollo.skipToken ? baseOptions : { ...defaultOptions, ...baseOptions };
+    return Apollo.useSuspenseQuery<EngagementQuery, EngagementQueryVariables>(EngagementDocument, options);
+}
+export type EngagementQueryHookResult = ReturnType<typeof useEngagementQuery>;
+export type EngagementLazyQueryHookResult = ReturnType<typeof useEngagementLazyQuery>;
+export type EngagementSuspenseQueryHookResult = ReturnType<typeof useEngagementSuspenseQuery>;
+export type EngagementQueryResult = Apollo.QueryResult<EngagementQuery, EngagementQueryVariables>;
+export const CreateEngagementDocument = gql`
+    mutation createEngagement($input: CreateEngagementInput!) {
+        createEngagement(input: $input) {
+            id
+            name
+            client
+        }
+    }
+`;
+export type CreateEngagementMutationFn = Apollo.MutationFunction<
+    CreateEngagementMutation,
+    CreateEngagementMutationVariables
+>;
+
+/**
+ * __useCreateEngagementMutation__
+ *
+ * To run a mutation, you first call `useCreateEngagementMutation` within a React component and pass it any options that fit your needs.
+ * When your component renders, `useCreateEngagementMutation` returns a tuple that includes:
+ * - A mutate function that you can call at any time to execute the mutation
+ * - An object with fields that represent the current status of the mutation's execution
+ *
+ * @param baseOptions options that will be passed into the mutation, supported options are listed on: https://www.apollographql.com/docs/react/api/react-hooks/#options-2;
+ *
+ * @example
+ * const [createEngagementMutation, { data, loading, error }] = useCreateEngagementMutation({
+ *   variables: {
+ *      input: // value for 'input'
+ *   },
+ * });
+ */
+export function useCreateEngagementMutation(
+    baseOptions?: Apollo.MutationHookOptions<CreateEngagementMutation, CreateEngagementMutationVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useMutation<CreateEngagementMutation, CreateEngagementMutationVariables>(
+        CreateEngagementDocument,
+        options,
+    );
+}
+export type CreateEngagementMutationHookResult = ReturnType<typeof useCreateEngagementMutation>;
+export type CreateEngagementMutationResult = Apollo.MutationResult<CreateEngagementMutation>;
+export type CreateEngagementMutationOptions = Apollo.BaseMutationOptions<
+    CreateEngagementMutation,
+    CreateEngagementMutationVariables
+>;
+export const AddScopeRuleDocument = gql`
+    mutation addScopeRule($engagementId: ID!, $input: ScopeRuleInput!) {
+        addScopeRule(engagementId: $engagementId, input: $input) {
+            ...scopeRuleFragment
+        }
+    }
+    ${ScopeRuleFragmentFragmentDoc}
+`;
+export type AddScopeRuleMutationFn = Apollo.MutationFunction<AddScopeRuleMutation, AddScopeRuleMutationVariables>;
+
+/**
+ * __useAddScopeRuleMutation__
+ *
+ * To run a mutation, you first call `useAddScopeRuleMutation` within a React component and pass it any options that fit your needs.
+ * When your component renders, `useAddScopeRuleMutation` returns a tuple that includes:
+ * - A mutate function that you can call at any time to execute the mutation
+ * - An object with fields that represent the current status of the mutation's execution
+ *
+ * @param baseOptions options that will be passed into the mutation, supported options are listed on: https://www.apollographql.com/docs/react/api/react-hooks/#options-2;
+ *
+ * @example
+ * const [addScopeRuleMutation, { data, loading, error }] = useAddScopeRuleMutation({
+ *   variables: {
+ *      engagementId: // value for 'engagementId'
+ *      input: // value for 'input'
+ *   },
+ * });
+ */
+export function useAddScopeRuleMutation(
+    baseOptions?: Apollo.MutationHookOptions<AddScopeRuleMutation, AddScopeRuleMutationVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useMutation<AddScopeRuleMutation, AddScopeRuleMutationVariables>(AddScopeRuleDocument, options);
+}
+export type AddScopeRuleMutationHookResult = ReturnType<typeof useAddScopeRuleMutation>;
+export type AddScopeRuleMutationResult = Apollo.MutationResult<AddScopeRuleMutation>;
+export type AddScopeRuleMutationOptions = Apollo.BaseMutationOptions<
+    AddScopeRuleMutation,
+    AddScopeRuleMutationVariables
+>;
+export const DeleteScopeRuleDocument = gql`
+    mutation deleteScopeRule($id: ID!) {
+        deleteScopeRule(id: $id)
+    }
+`;
+export type DeleteScopeRuleMutationFn = Apollo.MutationFunction<
+    DeleteScopeRuleMutation,
+    DeleteScopeRuleMutationVariables
+>;
+
+/**
+ * __useDeleteScopeRuleMutation__
+ *
+ * To run a mutation, you first call `useDeleteScopeRuleMutation` within a React component and pass it any options that fit your needs.
+ * When your component renders, `useDeleteScopeRuleMutation` returns a tuple that includes:
+ * - A mutate function that you can call at any time to execute the mutation
+ * - An object with fields that represent the current status of the mutation's execution
+ *
+ * @param baseOptions options that will be passed into the mutation, supported options are listed on: https://www.apollographql.com/docs/react/api/react-hooks/#options-2;
+ *
+ * @example
+ * const [deleteScopeRuleMutation, { data, loading, error }] = useDeleteScopeRuleMutation({
+ *   variables: {
+ *      id: // value for 'id'
+ *   },
+ * });
+ */
+export function useDeleteScopeRuleMutation(
+    baseOptions?: Apollo.MutationHookOptions<DeleteScopeRuleMutation, DeleteScopeRuleMutationVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useMutation<DeleteScopeRuleMutation, DeleteScopeRuleMutationVariables>(
+        DeleteScopeRuleDocument,
+        options,
+    );
+}
+export type DeleteScopeRuleMutationHookResult = ReturnType<typeof useDeleteScopeRuleMutation>;
+export type DeleteScopeRuleMutationResult = Apollo.MutationResult<DeleteScopeRuleMutation>;
+export type DeleteScopeRuleMutationOptions = Apollo.BaseMutationOptions<
+    DeleteScopeRuleMutation,
+    DeleteScopeRuleMutationVariables
+>;
+export const VerifyFindingDocument = gql`
+    mutation verifyFinding($id: ID!, $input: VerifyFindingInput!) {
+        verifyFinding(id: $id, input: $input) {
+            id
+            verificationStatus
+        }
+    }
+`;
+export type VerifyFindingMutationFn = Apollo.MutationFunction<VerifyFindingMutation, VerifyFindingMutationVariables>;
+
+/**
+ * __useVerifyFindingMutation__
+ *
+ * To run a mutation, you first call `useVerifyFindingMutation` within a React component and pass it any options that fit your needs.
+ * When your component renders, `useVerifyFindingMutation` returns a tuple that includes:
+ * - A mutate function that you can call at any time to execute the mutation
+ * - An object with fields that represent the current status of the mutation's execution
+ *
+ * @param baseOptions options that will be passed into the mutation, supported options are listed on: https://www.apollographql.com/docs/react/api/react-hooks/#options-2;
+ *
+ * @example
+ * const [verifyFindingMutation, { data, loading, error }] = useVerifyFindingMutation({
+ *   variables: {
+ *      id: // value for 'id'
+ *      input: // value for 'input'
+ *   },
+ * });
+ */
+export function useVerifyFindingMutation(
+    baseOptions?: Apollo.MutationHookOptions<VerifyFindingMutation, VerifyFindingMutationVariables>,
+) {
+    const options = { ...defaultOptions, ...baseOptions };
+    return Apollo.useMutation<VerifyFindingMutation, VerifyFindingMutationVariables>(VerifyFindingDocument, options);
+}
+export type VerifyFindingMutationHookResult = ReturnType<typeof useVerifyFindingMutation>;
+export type VerifyFindingMutationResult = Apollo.MutationResult<VerifyFindingMutation>;
+export type VerifyFindingMutationOptions = Apollo.BaseMutationOptions<
+    VerifyFindingMutation,
+    VerifyFindingMutationVariables
+>;

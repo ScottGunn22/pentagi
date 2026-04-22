@@ -22,6 +22,9 @@ import { UserProvider } from '@/providers/user-provider';
 import { SystemSettingsProvider } from './providers/system-settings-provider';
 
 const Dashboard = lazy(() => import('@/pages/dashboard/dashboard'));
+const Engagement = lazy(() => import('@/pages/engagements/engagement'));
+const Engagements = lazy(() => import('@/pages/engagements/engagements'));
+const NewEngagement = lazy(() => import('@/pages/engagements/new-engagement'));
 const Flow = lazy(() => import('@/pages/flows/flow'));
 const FlowReport = lazy(() => import('@/pages/flows/flow-report'));
 const Flows = lazy(() => import('@/pages/flows/flows'));
@@ -101,6 +104,20 @@ const App = () => {
                                                 <Route
                                                     element={<Template />}
                                                     path="templates/:templateId"
+                                                />
+
+                                                {/* Engagements (scanner ingestion) */}
+                                                <Route
+                                                    element={<Engagements />}
+                                                    path="engagements"
+                                                />
+                                                <Route
+                                                    element={<NewEngagement />}
+                                                    path="engagements/new"
+                                                />
+                                                <Route
+                                                    element={<Engagement />}
+                                                    path="engagements/:id"
                                                 />
                                             </Route>
 
