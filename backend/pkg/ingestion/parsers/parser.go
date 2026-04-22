@@ -1,6 +1,8 @@
 package parsers
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 
 	"pentagi/pkg/ingestion/schema"
@@ -22,3 +24,16 @@ var ErrPartial = partialError{}
 type partialError struct{}
 
 func (partialError) Error() string { return "partial parse" }
+
+// mustJSON marshals plain-struct evidence into a json.RawMessage. Parsers
+// pass scanner-shape structs whose fields are all primitives or other
+// plain structs, so json.Marshal cannot fail at runtime; if it ever
+// does, that is a programmer error (a non-marshalable field added to a
+// scanner struct), not user data — panic so the bug is loud.
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Errorf("parsers: unmarshalable evidence: %w", err))
+	}
+	return b
+}

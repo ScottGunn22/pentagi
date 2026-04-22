@@ -52,3 +52,33 @@ func TestNmap_EmptyFile(t *testing.T) {
 		t.Fatal("expected error on empty input")
 	}
 }
+
+func TestBuildExposedServiceTitle(t *testing.T) {
+	cases := []struct {
+		in   nmapService
+		want string
+	}{
+		{nmapService{Name: "dns"}, "Exposed service dns"},
+		{nmapService{Name: "https", Product: "nginx", Version: "1.24.0"}, "Exposed service https nginx 1.24.0"},
+		{nmapService{Name: "ssh", Product: "OpenSSH"}, "Exposed service ssh OpenSSH"},
+	}
+	for _, tc := range cases {
+		if got := buildExposedServiceTitle(tc.in); got != tc.want {
+			t.Errorf("buildExposedServiceTitle(%+v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestNmapConfidence(t *testing.T) {
+	cases := map[string]schema.Confidence{
+		"probed":  schema.ConfidenceCertain,
+		"table":   schema.ConfidenceTentative,
+		"":        schema.ConfidenceFirm,
+		"unknown": schema.ConfidenceFirm,
+	}
+	for in, want := range cases {
+		if got := nmapConfidence(in); got != want {
+			t.Errorf("nmapConfidence(%q) = %v, want %v", in, got, want)
+		}
+	}
+}

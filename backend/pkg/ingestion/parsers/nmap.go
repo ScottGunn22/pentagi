@@ -1,16 +1,19 @@
 package parsers
 
 import (
-	"encoding/json"
 	"encoding/xml"
-	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"pentagi/pkg/ingestion/schema"
 )
 
 type NmapParser struct{}
+
+// Compile-time assertion that *NmapParser satisfies the Parser interface.
+// Replicate this pattern in every new parser file.
+var _ Parser = (*NmapParser)(nil)
 
 func (p *NmapParser) Source() schema.ScanSourceType { return schema.SourceNmap }
 
@@ -54,6 +57,7 @@ type nmapService struct {
 	Name    string `xml:"name,attr"`
 	Product string `xml:"product,attr"`
 	Version string `xml:"version,attr"`
+	Method  string `xml:"method,attr"` // "probed" => high confidence; "table" => guess from port number
 }
 
 type nmapOS struct {
@@ -67,10 +71,15 @@ type nmapOS struct {
 	} `xml:"osmatch"`
 }
 
+// Parse reads an entire nmap XML document into memory. Acceptable because
+// nmap reports are bounded in size (tens of MB at most).
+//
+// Do NOT copy this approach to the Qualys parser — Qualys exports can be
+// hundreds of MB and Phase 10 mandates token-streaming via xml.Decoder.Token().
 func (p *NmapParser) Parse(r io.Reader) (*schema.ReportBundle, error) {
 	var run nmapRun
 	if err := xml.NewDecoder(r).Decode(&run); err != nil {
-		return nil, fmt.Errorf("nmap decode: %w", err)
+		return nil, err
 	}
 
 	bundle := &schema.ReportBundle{SourceType: schema.SourceNmap}
@@ -84,6 +93,7 @@ func (p *NmapParser) Parse(r io.Reader) (*schema.ReportBundle, error) {
 			}
 		}
 		if ip == "" {
+			// TODO(phase-16): emit ingestion.parsers.nmap.host_skipped{reason="no_addr"}
 			continue
 		}
 
@@ -115,20 +125,49 @@ func (p *NmapParser) Parse(r io.Reader) (*schema.ReportBundle, error) {
 			}
 			hh.Services = append(hh.Services, svc)
 
-			evidence, _ := json.Marshal(port)
 			bundle.Findings = append(bundle.Findings, schema.Finding{
 				Type:       schema.TypeExposedService,
 				Target:     schema.TargetRef{Kind: schema.TargetHost, Ref: hh.TargetRef(port.PortID, port.Protocol)},
-				Title:      fmt.Sprintf("Exposed service %s %s %s", port.Service.Name, port.Service.Product, port.Service.Version),
-				Severity:   schema.SeverityInfo,
-				Confidence: schema.ConfidenceCertain,
-				Evidence:   evidence,
+				Title:      buildExposedServiceTitle(port.Service),
+				Severity:   schema.SeverityInfo, // v1: uniform info; severity heuristics deferred to Phase 16
+				Confidence: nmapConfidence(port.Service.Method),
+				Evidence:   mustJSON(port),
 			})
 		}
 		bundle.Hosts = append(bundle.Hosts, hh)
 	}
 
-	raw, _ := json.Marshal(run)
-	bundle.RawEvidence = raw
+	bundle.RawEvidence = mustJSON(run)
 	return bundle, nil
+}
+
+// buildExposedServiceTitle joins non-empty service fields so titles like
+// "Exposed service dns" or "Exposed service https nginx 1.24.0" do not
+// carry trailing whitespace from missing product/version. Title text is
+// fed to LLM embeddings; trailing whitespace pollutes similarity scores.
+func buildExposedServiceTitle(s nmapService) string {
+	parts := []string{"Exposed service", s.Name}
+	if s.Product != "" {
+		parts = append(parts, s.Product)
+	}
+	if s.Version != "" {
+		parts = append(parts, s.Version)
+	}
+	return strings.Join(parts, " ")
+}
+
+// nmapConfidence maps the nmap service.method attribute to our normalized
+// Confidence enum: "probed" means nmap actually banner-grabbed the
+// service (high confidence), "table" means it guessed from the port
+// number alone (low confidence), and anything else is treated as a
+// medium-strength inference.
+func nmapConfidence(method string) schema.Confidence {
+	switch method {
+	case "probed":
+		return schema.ConfidenceCertain
+	case "table":
+		return schema.ConfidenceTentative
+	default:
+		return schema.ConfidenceFirm
+	}
 }
