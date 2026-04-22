@@ -68,7 +68,7 @@ func NewIngestionService(
 			schema.SourceNmap:      &parsers.NmapParser{},
 			schema.SourceBurp:      &parsers.BurpParser{},
 			schema.SourceTwistlock: &parsers.TwistlockParser{},
-			// Phase 10 will register qualys.
+			schema.SourceQualys:    &parsers.QualysParser{},
 		},
 	}
 }

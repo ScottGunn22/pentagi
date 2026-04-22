@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SCAN_SUMMARY>
+  <HEADER><KEY value="SCAN_DATE">2026-04-10</KEY></HEADER>
+  <IP_RESULTS>
+    <IP value="10.1.2.3" name="app.acme.internal">
+      <VULN_INFO_LIST>
+        <VULN_INFO>
+          <QID id="qid_38170">38170</QID>
+          <TYPE>Vuln</TYPE>
+          <TITLE>OpenSSH Terrapin Prefix Truncation</TITLE>
+          <SEVERITY>4</SEVERITY>
+          <CVSS_BASE>5.9</CVSS_BASE>
+          <CVE_ID_LIST>
+            <CVE_ID><ID>CVE-2023-48795</ID></CVE_ID>
+          </CVE_ID_LIST>
+          <RESULT>SSH server on port 22 advertises chacha20-poly1305@openssh.com...</RESULT>
+        </VULN_INFO>
+      </VULN_INFO_LIST>
+    </IP>
+  </IP_RESULTS>
+</SCAN_SUMMARY>
